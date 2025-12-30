@@ -77,7 +77,7 @@ debt-collection-agent/
 - Negotiation flow (EMI, partial, deferred payments)
 - Call closing logic and outcome recording
 
-## ⚙️ Setup Instructions
+## Setup Instructions
 
 ### 1️. Clone the Repository
 
