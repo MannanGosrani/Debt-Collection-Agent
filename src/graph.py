@@ -1,5 +1,8 @@
+# src/graph.py - COMPLETE REWRITE
+
 from langgraph.graph import StateGraph, END
 from src.state import CallState
+
 from src.nodes.greeting import greeting_node
 from src.nodes.verification import verification_node
 from src.nodes.disclosure import disclosure_node
@@ -8,93 +11,117 @@ from src.nodes.negotiation import negotiation_node
 from src.nodes.closing import closing_node
 
 
-# =========================
-# Routing Functions
-# =========================
+def route_next(state: CallState) -> str:
+    # Hard stop
+    if state.get("is_complete"):
+        return END
 
-def route_after_verification(state: CallState) -> str:
-    if state["is_verified"]:
+    # Pause if waiting for user
+    if state.get("awaiting_user"):
+        return END
+
+    stage = state.get("stage")
+
+    if stage == "init":
+        return "greeting"
+
+    if stage == "greeting":
+        return "verification"
+
+    if stage == "verification":
+        # 🔑 DO NOT re-enter verification once verified
+        if state.get("is_verified"):
+            return "disclosure"
+        return "verification"
+
+    if stage == "verified":
         return "disclosure"
-    if state["verification_attempts"] >= 3:
+
+    if stage == "disclosure":
+        return "payment_check"
+
+    if stage == "payment_check":
+        status = state.get("payment_status")
+        if status in ("paid", "disputed"):
+            return "closing"
+        if status in ("unable", "willing"):
+            return "negotiation"
+        if status == "callback":
+            return "closing"
         return "closing"
-    return "verification"
 
+    if stage == "negotiation":
+        return "closing"
 
-def route_after_payment_check(state: CallState) -> str:
-    status = state.get("payment_status") or "unknown"
-    routes = {
-        "paid": "already_paid",
-        "disputed": "dispute",
-        "unable": "negotiation",
-        "willing": "ptp_recording",
-        "callback": "closing",
-    }
-    return routes.get(status, "closing")
+    if stage == "closing":
+        return END
 
+    return END
 
-# =========================
-# Graph Factory
-# =========================
 
 def create_graph():
     graph = StateGraph(CallState)
 
-    # Register nodes (logic added by teammates)
-    graph.add_node("init", lambda s: s)  
+    # Register all nodes
     graph.add_node("greeting", greeting_node)
     graph.add_node("verification", verification_node)
     graph.add_node("disclosure", disclosure_node)
     graph.add_node("payment_check", payment_check_node)
-    graph.add_node("already_paid", lambda s: s)   # handled later by Shruti
-    graph.add_node("dispute", lambda s: s)         # handled later by Shruti
     graph.add_node("negotiation", negotiation_node)
-    graph.add_node("ptp_recording", lambda s: s)   # handled later by Shruti
     graph.add_node("closing", closing_node)
 
+    # Single entry point
+    graph.set_entry_point("greeting")
 
-    # Entry point
-    graph.set_entry_point("init")
-
-    # Linear flow
-    graph.add_edge("init", "greeting")
-    graph.add_edge("greeting", "verification")
-
-    # Conditional flows
+    # Use same routing function for all nodes
     graph.add_conditional_edges(
-        "verification",
-        route_after_verification,
+        "greeting",
+        route_next,
         {
-            "disclosure": "disclosure",
             "verification": "verification",
-            "closing": "closing",
-        },
+            END: END,
+        }
     )
 
-    graph.add_edge("disclosure", "payment_check")
+    graph.add_conditional_edges(
+        "verification",
+        route_next,
+        {
+            "verification": "verification",
+            "disclosure": "disclosure",
+            END: END,
+        }
+    )
+
+    graph.add_conditional_edges(
+        "disclosure",
+        route_next,
+        {
+            "payment_check": "payment_check",
+            END: END,
+        }
+    )
 
     graph.add_conditional_edges(
         "payment_check",
-        route_after_payment_check,
+        route_next,
         {
-            "already_paid": "already_paid",
-            "dispute": "dispute",
             "negotiation": "negotiation",
-            "ptp_recording": "ptp_recording",
             "closing": "closing",
-        },
+        }
     )
 
-    # Terminal paths
-    # Terminal edges
-    graph.add_edge("already_paid", "closing")
-    graph.add_edge("dispute", "closing")
-    graph.add_edge("negotiation", "ptp_recording")
-    graph.add_edge("ptp_recording", "closing")
-    graph.add_edge("closing", END)
+    graph.add_conditional_edges(
+        "negotiation",
+        route_next,
+        {
+            "closing": "closing",
+        }
+    )
 
+    graph.add_edge("closing", END)
 
     return graph
 
 
-# Compiled app
 app = create_graph().compile()
