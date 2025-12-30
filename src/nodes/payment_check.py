@@ -11,7 +11,7 @@ def payment_check_node(state: CallState) -> dict:
 
     user_input = state["last_user_input"]
 
-    intent = classify_intent(prompt).strip().lower()
+    intent = classify_intent(user_input).strip().lower()
 
     valid = ["paid", "disputed", "unable", "willing", "callback"]
     if intent not in valid:
