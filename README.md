@@ -189,10 +189,3 @@ Experiments are versioned automatically (`v1-*`) for comparison.
 - **Deterministic fallback** added to prevent LLM failures blocking execution
 - No external databases — fully self-contained as per assignment scope
 
-## Current Status
-
-- ✅ All core flows implemented
-- ✅ Team contributions merged
-- ✅ LangSmith evaluation integrated
-- ✅ Manual CLI testing functional
-- ✅ Ready for review / submission
