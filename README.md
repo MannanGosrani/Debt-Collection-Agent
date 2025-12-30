@@ -23,12 +23,34 @@ This agent simulates real-world debt collection calls by:
 ### Project Structure
 
 ```
-src/
- ├── graph.py          # LangGraph flow definition
- ├── state.py          # Shared call state
- ├── data.py           # In-memory customer & call records
- ├── nodes/            # Individual conversation nodes
- └── utils/llm.py      # LLM + deterministic fallback logic
+debt-collection-agent/
+├── experiments/
+│   └── langsmith_eval.py                   # LangSmith evaluation script
+├── scripts/
+│   └── create_langsmith_dataset.py         # Dataset creation for LangSmith
+├── src/
+│   ├── nodes/                              # Conversation flow nodes
+│   │   ├── __init__.py
+│   │   ├── closing.py                      # Call closing & outcome recording
+│   │   ├── disclosure.py                   # Legal disclosure node
+│   │   ├── greeting.py                     # Initial greeting node
+│   │   ├── negotiation.py                  # Payment negotiation logic
+│   │   ├── payment_check.py                # Payment intent classification
+│   │   └── verification.py                 # Identity verification
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   └── llm.py                          # LLM + deterministic fallback
+│   ├── __init__.py
+│   ├── data.py                             # In-memory customer & call records
+│   ├── graph.py                            # LangGraph flow definition
+│   └── state.py                            # Shared call state
+├── tests/
+│   └── test_scenarios.py                   # Test scenarios
+├── .gitignore                              # Git ignore rules
+├── .env.example                            # Environment variables template
+├── main.py                                 # CLI for manual testing
+├── README.md                               # Project documentation
+└── requirements.txt                        # Python dependencies
 ```
 
 ## Team Contributions
