@@ -1,5 +1,11 @@
 from langgraph.graph import StateGraph, END
 from src.state import CallState
+from src.nodes.greeting import greeting_node
+from src.nodes.verification import verification_node
+from src.nodes.disclosure import disclosure_node
+from src.nodes.payment_check import payment_check_node
+from src.nodes.negotiation import negotiation_node
+from src.nodes.closing import closing_node
 
 
 # =========================
@@ -34,16 +40,17 @@ def create_graph():
     graph = StateGraph(CallState)
 
     # Register nodes (logic added by teammates)
-    graph.add_node("init", lambda s: s)
-    graph.add_node("greeting", lambda s: s)
-    graph.add_node("verification", lambda s: s)
-    graph.add_node("disclosure", lambda s: s)
-    graph.add_node("payment_check", lambda s: s)
-    graph.add_node("already_paid", lambda s: s)
-    graph.add_node("dispute", lambda s: s)
-    graph.add_node("negotiation", lambda s: s)
-    graph.add_node("ptp_recording", lambda s: s)
-    graph.add_node("closing", lambda s: s)
+    graph.add_node("init", lambda s: s)  
+    graph.add_node("greeting", greeting_node)
+    graph.add_node("verification", verification_node)
+    graph.add_node("disclosure", disclosure_node)
+    graph.add_node("payment_check", payment_check_node)
+    graph.add_node("already_paid", lambda s: s)   # handled later by Shruti
+    graph.add_node("dispute", lambda s: s)         # handled later by Shruti
+    graph.add_node("negotiation", negotiation_node)
+    graph.add_node("ptp_recording", lambda s: s)   # handled later by Shruti
+    graph.add_node("closing", closing_node)
+
 
     # Entry point
     graph.set_entry_point("init")
@@ -78,15 +85,16 @@ def create_graph():
     )
 
     # Terminal paths
+    # Terminal edges
     graph.add_edge("already_paid", "closing")
     graph.add_edge("dispute", "closing")
     graph.add_edge("negotiation", "ptp_recording")
     graph.add_edge("ptp_recording", "closing")
     graph.add_edge("closing", END)
 
+
     return graph
 
 
 # Compiled app
 app = create_graph().compile()
-    
