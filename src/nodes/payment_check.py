@@ -11,21 +11,6 @@ def payment_check_node(state: CallState) -> dict:
 
     user_input = state["last_user_input"]
 
-    prompt = f"""
-Classify the customer's response into ONE category only:
-
-paid       → customer says they already paid
-disputed   → customer says loan is wrong / not theirs / incorrect amount
-unable     → customer cannot pay right now (financial difficulty)
-willing    → customer wants to pay or asks for options
-callback   → customer asks to be contacted later
-
-Customer response:
-\"\"\"{user_input}\"\"\"
-
-Return ONLY one word.
-"""
-
     intent = classify_intent(prompt).strip().lower()
 
     valid = ["paid", "disputed", "unable", "willing", "callback"]
