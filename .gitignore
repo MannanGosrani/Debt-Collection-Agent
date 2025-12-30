@@ -1,14 +1,14 @@
-# Environment variables
-.env
-**/.env
-
 # Virtual environments
-venv/
 .venv/
+venv/
 
 # Python cache
 __pycache__/
 **/__pycache__/
 
-# Logs
-*.log
+# Environment variables
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
