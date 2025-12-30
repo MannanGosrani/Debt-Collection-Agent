@@ -11,8 +11,6 @@ This agent simulates real-world debt collection calls by:
 - Closing calls professionally
 - Tracking performance using LangSmith
 
----
-
 ## Architecture Overview
 
 ### Core Layers
@@ -32,8 +30,6 @@ src/
  ├── nodes/            # Individual conversation nodes
  └── utils/llm.py      # LLM + deterministic fallback logic
 ```
-
----
 
 ## Team Contributions
 
@@ -58,8 +54,6 @@ src/
 - Payment intent classification
 - Negotiation flow (EMI, partial, deferred payments)
 - Call closing logic and outcome recording
-
----
 
 ## ⚙️ Setup Instructions
 
@@ -86,8 +80,6 @@ pip install -r requirements.txt
 
 > `pytest` is **not required** to run this project.
 
----
-
 ## Environment Variables
 
 Create a `.env` file in the project root:
@@ -105,8 +97,6 @@ LANGSMITH_PROJECT=debt-collection-agent
 ```
 
 > **Never commit `.env` to GitHub**
-
----
 
 ## Running the Agent (Manual CLI)
 
@@ -127,8 +117,6 @@ Available test customers:
 ```
 
 You can then simulate a real conversation step-by-step.
-
----
 
 ## LangSmith Observability & Evaluation
 
@@ -164,8 +152,6 @@ Results are viewable in:
 LangSmith → Datasets → debt-collection-eval
 ```
 
----
-
 ## Evaluation Logic
 
 Custom evaluator example:
@@ -174,16 +160,12 @@ Custom evaluator example:
 
 Experiments are versioned automatically (`v1-*`) for comparison.
 
----
-
 ## Design Decisions
 
 - **LangGraph** chosen for explicit state transitions and auditability
 - **LangSmith** used for real-world observability (not mock logging)
 - **Deterministic fallback** added to prevent LLM failures blocking execution
 - No external databases — fully self-contained as per assignment scope
-
----
 
 ## Current Status
 
