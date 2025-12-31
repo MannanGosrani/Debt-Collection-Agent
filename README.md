@@ -1,6 +1,6 @@
 # Debt Collection Agent (LangGraph + LangSmith)
 
-An AI-powered **Debt Collection Voice Agent** built using **LangGraph** for conversational orchestration and **LangSmith** for observability and evaluation.
+An AI-powered Debt Collection Voice Agent built using LangGraph for conversational orchestration and LangSmith for observability and evaluation.
 
 This agent simulates real-world debt collection calls by:
 
@@ -14,13 +14,12 @@ This agent simulates real-world debt collection calls by:
 ## Architecture Overview
 
 ### Core Layers
-
 - **Agent Orchestration**: LangGraph state machine
 - **LLM Layer**: Google Gemini (with deterministic fallback)
 - **Observability & Evaluation**: LangSmith
 - **CLI Interface**: Manual call simulation via terminal
 
-### Project Structure
+## Project Structure
 
 ```
 debt-collection-agent/
@@ -55,52 +54,52 @@ debt-collection-agent/
 
 ## Team Contributions
 
-### **Mannan Gosrani (Owner / Integrator)**
-
+### Mannan Gosrani (Owner / Integrator)
 - Overall system architecture and orchestration
 - LangGraph state machine and flow integration
 - Git workflow, branching strategy, and conflict resolution
 - LangSmith setup (tracing, datasets, evaluations)
 - Deterministic LLM fallback logic
-- CLI-based manual testing (`main.py`)
+- CLI-based manual testing (main.py)
+- Fixed evaluation script state propagation issues
+- Debugged and resolved verification flow bugs
 - Final integration, testing, and documentation
 
-### **Atharva**
+### Atharva
+- Identity verification flow implementation
+- Verification node with DOB-based authentication
+- Verification failure and retry logic (max 3 attempts)
+- Added awaiting_user flags for proper flow control
+- Implemented robust DOB matching with multiple format support
 
-- Identity verification flow
-- Verification node implementation
-- Verification failure and retry logic
-
-### **Shruti**
-
-- Payment intent classification
+### Shruti
+- Payment intent classification using LLM
 - Negotiation flow (EMI, partial, deferred payments)
 - Call closing logic and outcome recording
+- Dispute and already-paid flow handling
+- Payment status tracking and PTP recording
 
 ## Setup Instructions
 
-### 1️. Clone the Repository
-
+### 1. Clone the Repository
 ```bash
 git clone https://github.com/MannanGosrani/Debt-Collection-Agent.git
 cd Debt-Collection-Agent
 ```
 
 ### 2. Create Virtual Environment
-
 ```bash
 python -m venv .venv
 source .venv/bin/activate   # macOS/Linux
 .venv\Scripts\activate      # Windows
 ```
 
-### 3️. Install Dependencies
-
+### 3. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-> `pytest` is **not required** to run this project.
+**Note**: pytest is not required to run this project.
 
 ## Environment Variables
 
@@ -118,7 +117,7 @@ LANGSMITH_API_KEY=your_langsmith_api_key
 LANGSMITH_PROJECT=debt-collection-agent
 ```
 
-> **Never commit `.env` to GitHub**
+**Never commit .env to GitHub**
 
 ## Running the Agent (Manual CLI)
 
@@ -142,50 +141,104 @@ You can then simulate a real conversation step-by-step.
 
 ## LangSmith Observability & Evaluation
 
-### Tracing
-
-All agent runs are automatically logged to **LangSmith**, including:
-
+All agent runs are automatically logged to LangSmith, including:
 - Node-level execution
-- Latency
-- Errors
+- Latency metrics
 - Token usage
+- Errors and exceptions
+
+### View Results
+- **Evaluation Dataset**: [View all 6 test scenarios and results](https://smith.langchain.com/o/c2bf1b47-4401-464a-8074-2a60bb18ef20/datasets)
 
 ### Create Evaluation Dataset
-
 ```bash
 python scripts/create_langsmith_dataset.py
 ```
 
 ### Run Evaluation
-
 ```bash
 python -m experiments.langsmith_eval
 ```
 
 This evaluates:
-
 - Verification correctness
 - Agent behavior across predefined test scenarios
 
 Results are viewable in:
+- LangSmith → Datasets → debt-collection-eval
 
-```
-LangSmith → Datasets → debt-collection-eval
-```
+## Test Scenarios Coverage
+
+All 6 scenarios passing in LangSmith evaluation:
+
+1. **Happy Path PTP** - Customer commits to payment on a specific date
+   - Expected: `is_verified: true`, `payment_status: willing`, `call_outcome: willing`
+
+2. **Already Paid** - Customer claims payment was already made
+   - Expected: `is_verified: true`, `payment_status: paid`, `call_outcome: paid`
+
+3. **Dispute** - Customer disputes the debt validity
+   - Expected: `is_verified: true`, `payment_status: disputed`, `call_outcome: disputed`
+
+4. **Negotiate Accept** - Customer negotiates and accepts a payment plan
+   - Expected: `is_verified: true`, `payment_status: unable`, `negotiation_offered: true`
+
+5. **Verification Failed** - Customer fails identity verification after 3 attempts
+   - Expected: `is_verified: false`, `call_outcome: verification_failed`, `no_disclosure: true`
+
+6. **Callback Request** - Customer requests a callback
+   - Expected: `is_verified: true`, `payment_status: callback`, `call_outcome: callback`
+
+View detailed results: [LangSmith Dataset](https://smith.langchain.com/o/c2bf1b47-4401-464a-8074-2a60bb18ef20/datasets)
 
 ## Evaluation Logic
 
-Custom evaluator example:
+Custom evaluators implemented:
 
-- `verified_correct`: checks if agent verification outcome matches expected result
+- **verified_correct**: Checks if agent verification outcome matches expected result
+- **payment_status_correct**: Validates payment status classification
+- **call_outcome_correct**: Verifies final call outcome
+- **check_scenario_outcomes**: Scenario-specific validation (PTP recorded, dispute recorded, etc.)
 
-Experiments are versioned automatically (`v1-*`) for comparison.
+Experiments are versioned automatically (v3-required-cases-*) for comparison.
+
+## Key Features
+
+- Secure DOB-based identity verification (max 3 attempts)
+- Natural language intent classification using LLM
+- Flexible negotiation with multiple payment plans
+- Complete LangSmith tracing and evaluation
+- Proper state management with awaiting_user flags
+- Robust error handling and graceful failures
+- 100% test scenario pass rate
 
 ## Design Decisions
 
 - **LangGraph** chosen for explicit state transitions and auditability
 - **LangSmith** used for real-world observability (not mock logging)
 - **Deterministic fallback** added to prevent LLM failures blocking execution
-- No external databases — fully self-contained as per assignment scope
+- **No external databases** — fully self-contained as per assignment scope
+- **Awaiting_user flags** implemented for proper conversation flow control
+- **State propagation** carefully managed in evaluation scripts to ensure accurate testing
 
+## Challenges Faced & Solutions
+
+### 1. State Management in Evaluation
+**Problem**: User inputs were not being propagated correctly to the graph, resulting in empty `last_user_input` during verification.
+
+**Solution**: Refactored the `provide_input_and_continue` helper to create a new state dict instead of mutating in place, ensuring all state updates are properly passed to graph invocations.
+
+### 2. Verification Flow Control
+**Problem**: The graph was not waiting for user input at critical points, causing verification to run with empty responses.
+
+**Solution**: Added `awaiting_user` flags to all nodes that require user input (greeting, verification, disclosure), allowing the evaluation script to properly pause and resume execution.
+
+### 3. DOB Matching Reliability
+**Problem**: Date of birth verification was failing due to format variations (e.g., "15-03-1985" vs "15/03/1985").
+
+**Solution**: Implemented robust DOB matching with normalization, supporting multiple separators (-, /, space) and both exact and substring matching.
+
+### 4. Merge Conflicts During Integration
+**Problem**: Multiple team members working on the same files caused merge conflicts.
+
+**Solution**: Established feature-branch workflow and used `git checkout --ours` strategy to resolve conflicts by keeping the most recent working versions.
