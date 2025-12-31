@@ -6,7 +6,15 @@ from ..state import CallState
 def disclosure_node(state: CallState) -> dict:
     """
     Provide legal disclosure and explain outstanding amount.
+    Only runs once.
     """
+    
+    # Skip if already disclosed - just update stage to move forward
+    if state.get("has_disclosed"):
+        return {
+            "stage": "payment_check",
+            "awaiting_user": False,
+        }
     
     amount = state.get("outstanding_amount", 0)
     
@@ -17,10 +25,12 @@ def disclosure_node(state: CallState) -> dict:
     )
     
     return {
+        "has_disclosed": True,
         "messages": state["messages"] + [{
             "role": "assistant",
             "content": message
         }],
         "stage": "disclosure",
         "awaiting_user": True,
+        "last_user_input": None,
     }

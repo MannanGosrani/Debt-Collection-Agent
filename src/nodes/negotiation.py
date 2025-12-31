@@ -3,6 +3,7 @@
 from ..state import CallState
 from ..utils.llm import generate_response
 
+
 def negotiation_node(state: CallState) -> dict:
     """
     Offer payment plans when customer cannot pay immediately.
@@ -16,7 +17,7 @@ Customer cannot pay immediately.
 
 Outstanding amount: ₹{amount}
 
-Politely offer 2–3 payment options, for example:
+Politely offer 2-3 payment options, for example:
 - Partial payment now
 - EMI plan
 - Pay full amount on a later date
@@ -38,5 +39,7 @@ Keep response short and professional.
             "content": response
         }],
         "offered_plans": offered_plans,
-        "stage": "negotiation"
+        "stage": "negotiation",
+        "awaiting_user": False,
+        "last_user_input": None,
     }

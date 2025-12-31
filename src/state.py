@@ -34,12 +34,13 @@ PaymentStatus = Literal[
 # =========================
 class CallState(TypedDict):
     # === Conversation ===
-    messages: List[dict]          # [{"role": "user/assistant", "content": "..."}]
+    messages: List[dict]
     stage: Stage
     turn_count: int
     last_user_input: Optional[str]
-    awaiting_user: bool           # NEW: Flag to pause execution
-    has_greeted: bool             # NEW: Track if greeting done
+    awaiting_user: bool
+    has_greeted: bool
+    has_disclosed: bool  # NEW: Track if disclosure happened
     
     # === Customer Info ===
     customer_id: str
@@ -104,6 +105,7 @@ def create_initial_state(phone: str) -> Optional[CallState]:
         last_user_input=None,
         awaiting_user=False,
         has_greeted=False,
+        has_disclosed=False,
         
         # Customer
         customer_id=customer["id"],

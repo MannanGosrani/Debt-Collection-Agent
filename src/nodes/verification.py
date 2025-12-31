@@ -9,6 +9,13 @@ def verification_node(state: CallState) -> dict:
     Allows max 3 attempts.
     """
 
+    # Skip verification if already verified
+    if state.get("is_verified"):
+        return {
+            "stage": "verified",
+            "awaiting_user": False,
+        }
+
     attempts = state.get("verification_attempts", 0)
     user_input = state.get("last_user_input")
     expected_dob = state["customer_dob"].lower()
@@ -27,7 +34,6 @@ def verification_node(state: CallState) -> dict:
         }
 
     # If awaiting user input or no input provided, don't process
-    # This prevents the loop when user hasn't responded yet
     if state.get("awaiting_user") or not user_input or user_input.strip() == "":
         return {
             "stage": "verification",
@@ -58,7 +64,7 @@ def verification_node(state: CallState) -> dict:
     # Incorrect DOB - increment attempts
     new_attempts = attempts + 1
 
-    # Max attempts reached (>= 3 means 3 failed attempts after initial ask)
+    # Max attempts reached (>= 4 means 3 failed attempts after initial ask)
     if new_attempts >= 4:
         return {
             "verification_attempts": new_attempts,

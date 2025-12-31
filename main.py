@@ -22,8 +22,19 @@ def main():
     print("\n--- Starting Call ---\n")
 
     # Conversation loop
+    iteration = 0
     while not state.get("is_complete"):
+        iteration += 1
+        
+        # Safety check
+        if iteration > 50:
+            print("\nMax iterations reached - ending call")
+            break
+            
         try:
+            # Debug info
+            print(f"[DEBUG] Stage: {state.get('stage')}, Awaiting: {state.get('awaiting_user')}, Verified: {state.get('is_verified')}")
+            
             # Invoke the graph
             state = app.invoke(state, config={"recursion_limit": 25})
             
@@ -57,7 +68,8 @@ def main():
                 state["awaiting_user"] = False
             else:
                 # If not awaiting and not complete, something went wrong
-                print("\nUnexpected state - ending call")
+                print(f"\n[DEBUG] Unexpected state - Stage: {state.get('stage')}, Complete: {state.get('is_complete')}")
+                print("Ending call")
                 break
                 
         except Exception as e:
@@ -69,6 +81,7 @@ def main():
     print("\n=== Call Summary ===")
     print(f"Outcome: {state.get('call_outcome', 'unknown')}")
     print(f"Verified: {state.get('is_verified')}")
+    print(f"Payment Status: {state.get('payment_status')}")
     if state.get("call_summary"):
         print(f"\n{state['call_summary']}")
 
