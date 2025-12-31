@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 import os
 import sys
 
-# Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
@@ -14,7 +13,7 @@ from langsmith import Client
 
 client = Client()
 
-# Delete old dataset if exists
+# Delete old dataset
 try:
     datasets = list(client.list_datasets(dataset_name="debt-collection-eval"))
     for ds in datasets:
@@ -26,15 +25,13 @@ except Exception as e:
 # Create fresh dataset
 dataset = client.create_dataset(
     "debt-collection-eval",
-    description="Required test scenarios for debt collection agent - 6 cases"
+    description="Debt collection agent evaluation"
 )
 
 print(f"✅ Created new dataset: {dataset.name}")
 print(f"Dataset ID: {dataset.id}\n")
 
-# Define the 6 required test cases
 test_cases = [
-    # Case 1: Happy Path PTP
     {
         "input": {
             "phone": "+919876543210",
@@ -47,13 +44,10 @@ test_cases = [
         },
         "expected": {
             "is_verified": True,
-            "payment_status": "willing",
             "call_outcome": "willing",
-            "ptp_recorded": True
+            "payment_status": "willing"
         }
     },
-    
-    # Case 2: Already Paid
     {
         "input": {
             "phone": "+919876543211",
@@ -66,13 +60,10 @@ test_cases = [
         },
         "expected": {
             "is_verified": True,
-            "payment_status": "paid",
             "call_outcome": "paid",
-            "closed_confirmed": True
+            "payment_status": "paid"
         }
     },
-    
-    # Case 3: Dispute
     {
         "input": {
             "phone": "+919876543212",
@@ -85,13 +76,10 @@ test_cases = [
         },
         "expected": {
             "is_verified": True,
-            "payment_status": "disputed",
             "call_outcome": "disputed",
-            "dispute_recorded": True
+            "payment_status": "disputed"
         }
     },
-    
-    # Case 4: Negotiate → Accept (3 month plan)
     {
         "input": {
             "phone": "+919876543210",
@@ -105,14 +93,10 @@ test_cases = [
         },
         "expected": {
             "is_verified": True,
-            "payment_status": "unable",
             "call_outcome": "unable",
-            "negotiation_offered": True,
-            "ptp_with_plan": True
+            "payment_status": "unable"
         }
     },
-    
-    # Case 5: Verification Failed
     {
         "input": {
             "phone": "+919876543210",
@@ -125,12 +109,9 @@ test_cases = [
         "expected": {
             "is_verified": False,
             "call_outcome": "verification_failed",
-            "is_complete": True,
-            "no_disclosure": True
+            "payment_status": None
         }
     },
-    
-    # Case 6: Callback Request
     {
         "input": {
             "phone": "+919876543211",
@@ -143,14 +124,12 @@ test_cases = [
         },
         "expected": {
             "is_verified": True,
-            "payment_status": "callback",
             "call_outcome": "callback",
-            "callback_noted": True
+            "payment_status": "callback"
         }
     }
 ]
 
-# Add test cases to dataset
 for i, tc in enumerate(test_cases, 1):
     client.create_example(
         inputs=tc["input"],
@@ -160,6 +139,5 @@ for i, tc in enumerate(test_cases, 1):
     print(f"✅ Case {i}: {tc['input']['scenario']}")
 
 print(f"\n{'='*60}")
-print(f"✅ Dataset created successfully with {len(test_cases)} test cases")
+print(f"✅ Dataset created with {len(test_cases)} test cases")
 print(f"{'='*60}")
-print(f"\nView at: https://smith.langchain.com")

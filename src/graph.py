@@ -1,4 +1,4 @@
-# src/graph.py 
+# src/graph.py
 
 from langgraph.graph import StateGraph, END
 from src.state import CallState
@@ -11,41 +11,35 @@ from src.nodes.negotiation import negotiation_node
 from src.nodes.closing import closing_node
 
 
-def should_end(state: CallState) -> str:
-    """Check if we should end execution."""
-    if state.get("is_complete"):
-        return "end"
-    if state.get("awaiting_user"):
-        return "end"
-    return "continue"
-
-
 def route_from_greeting(state: CallState) -> str:
-    """Route after greeting."""
-    check = should_end(state)
-    if check == "end":
+    """Route after greeting"""
+    if state.get("is_complete"):
+        return END
+    if state.get("awaiting_user"):
         return END
     return "verification"
 
 
 def route_from_verification(state: CallState) -> str:
-    """Route after verification."""
-    check = should_end(state)
-    if check == "end":
+    """Route after verification"""
+    if state.get("is_complete"):
+        return END
+    if state.get("awaiting_user"):
         return END
     
     # If verified, go to disclosure
     if state.get("is_verified"):
         return "disclosure"
     
-    # Not verified yet, stay in verification
+    # Stay in verification
     return "verification"
 
 
 def route_from_disclosure(state: CallState) -> str:
-    """Route after disclosure."""
-    check = should_end(state)
-    if check == "end":
+    """Route after disclosure"""
+    if state.get("is_complete"):
+        return END
+    if state.get("awaiting_user"):
         return END
     
     # Always go to payment_check after disclosure
@@ -53,30 +47,29 @@ def route_from_disclosure(state: CallState) -> str:
 
 
 def route_from_payment_check(state: CallState) -> str:
-    """Route after payment check."""
+    """Route after payment check"""
     status = state.get("payment_status")
     
-    # Paid, disputed, or callback -> closing
+    # Paid, disputed, or callback → closing
     if status in ("paid", "disputed", "callback"):
         return "closing"
     
-    # Unable or willing -> negotiation
+    # Unable or willing → negotiation
     if status in ("unable", "willing", "unknown"):
         return "negotiation"
     
-    # Default to closing
     return "closing"
 
 
 def route_from_negotiation(state: CallState) -> str:
-    """Route after negotiation."""
+    """Route after negotiation"""
     return "closing"
 
 
 def create_graph():
     graph = StateGraph(CallState)
 
-    # Register all nodes
+    # Register nodes
     graph.add_node("greeting", greeting_node)
     graph.add_node("verification", verification_node)
     graph.add_node("disclosure", disclosure_node)
@@ -87,7 +80,7 @@ def create_graph():
     # Entry point
     graph.set_entry_point("greeting")
 
-    # Define edges with separate routing functions
+    # Routing
     graph.add_conditional_edges(
         "greeting",
         route_from_greeting,

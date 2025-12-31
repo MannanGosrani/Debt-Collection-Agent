@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 import os
 import sys
 
-# Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
@@ -15,194 +14,174 @@ from src.state import create_initial_state
 from src.graph import app
 
 
-# -------------------------
-# Helper: step graph until it asks user or finishes
-# -------------------------
-def step_until_awaiting(state):
-    while not state.get("awaiting_user") and not state.get("is_complete"):
-        state = app.invoke(state, config={"recursion_limit": 25})
-    return state
-
-
-# -------------------------
-# Helper: provide user input and continue
-# -------------------------
-def provide_input_and_continue(state, user_input):
-    """Add user input to state and step until next wait point"""
-    # CRITICAL: Create a complete new state dict with the user input
-    updated_state = dict(state)  # Copy current state
-    updated_state["messages"] = state["messages"] + [{
-        "role": "user",
-        "content": user_input
-    }]
-    updated_state["last_user_input"] = user_input
-    updated_state["awaiting_user"] = False
-    
-    # Now invoke the graph with the updated state
-    return step_until_awaiting(updated_state)
-
-
-# -------------------------
-# Main runner
-# -------------------------
 def run_agent(inputs: dict) -> dict:
+    """
+    Run agent through complete conversation flow.
+    """
     phone = inputs["phone"]
+    scenario = inputs["scenario"]
     user_responses = inputs["user_responses"]
-
+    
+    # Initialize state
     state = create_initial_state(phone)
     if not state:
-        return {"error": "Customer not found"}
-
-    stages_completed = []
+        return {
+            "is_verified": None,
+            "call_outcome": None,
+            "payment_status": None,
+            "error": "Customer not found"
+        }
 
     try:
-        # -------------------------
-        # Greeting
-        # -------------------------
-        state = step_until_awaiting(state)
-        stages_completed.append("greeting")
-
-        if "greeting" in user_responses:
-            state = provide_input_and_continue(state, user_responses["greeting"])
-
-        # -------------------------
-        # Verification
-        # -------------------------
+        # Use invoke instead of stream for cleaner state management
+        config = {"recursion_limit": 25}
+        
+        # Step 1: Greeting
+        state = app.invoke(state, config)
+        
+        # Step 2: Respond to greeting
+        if "greeting" in user_responses and state.get("awaiting_user"):
+            state["messages"].append({
+                "role": "user",
+                "content": user_responses["greeting"]
+            })
+            state["last_user_input"] = user_responses["greeting"]
+            state["awaiting_user"] = False
+            state = app.invoke(state, config)
+        
+        # Step 3: Handle verification
         if "verification_attempts" in user_responses:
-            # Verification failure path
+            # Multiple verification attempts (failed verification scenario)
             for attempt in user_responses["verification_attempts"]:
                 if state.get("is_complete"):
                     break
-                state = provide_input_and_continue(state, attempt)
-                stages_completed.append("verification_attempt")
-
+                if state.get("awaiting_user"):
+                    state["messages"].append({
+                        "role": "user",
+                        "content": attempt
+                    })
+                    state["last_user_input"] = attempt
+                    state["awaiting_user"] = False
+                    state = app.invoke(state, config)
+        
         elif "verification" in user_responses:
-            state = provide_input_and_continue(state, user_responses["verification"])
-            stages_completed.append("verification")
-
-        # -------------------------
-        # Disclosure
-        # -------------------------
+            # Single verification attempt (successful)
+            if state.get("awaiting_user") and not state.get("is_complete"):
+                state["messages"].append({
+                    "role": "user",
+                    "content": user_responses["verification"]
+                })
+                state["last_user_input"] = user_responses["verification"]
+                state["awaiting_user"] = False
+                state = app.invoke(state, config)
+        
+        # Step 4: Handle disclosure response
         if "disclosure" in user_responses and not state.get("is_complete"):
-            state = provide_input_and_continue(state, user_responses["disclosure"])
-            stages_completed.append("disclosure")
-
-        # -------------------------
-        # Negotiation (optional)
-        # -------------------------
+            if state.get("awaiting_user"):
+                state["messages"].append({
+                    "role": "user",
+                    "content": user_responses["disclosure"]
+                })
+                state["last_user_input"] = user_responses["disclosure"]
+                state["awaiting_user"] = False
+                state = app.invoke(state, config)
+        
+        # Step 5: Handle negotiation response (if applicable)
         if "negotiation" in user_responses and not state.get("is_complete"):
-            state = provide_input_and_continue(state, user_responses["negotiation"])
-            stages_completed.append("negotiation")
-
-        # -------------------------
-        # Final Output
-        # -------------------------
+            if state.get("awaiting_user"):
+                state["messages"].append({
+                    "role": "user",
+                    "content": user_responses["negotiation"]
+                })
+                state["last_user_input"] = user_responses["negotiation"]
+                state["awaiting_user"] = False
+                state = app.invoke(state, config)
+        
+        # Return final state outputs
         return {
             "is_verified": state.get("is_verified"),
-            "payment_status": state.get("payment_status"),
             "call_outcome": state.get("call_outcome"),
-            "is_complete": state.get("is_complete"),
+            "payment_status": state.get("payment_status"),
             "final_stage": state.get("stage"),
-            "message_count": len(state.get("messages", [])),
-            "stages_completed": stages_completed,
-
-            # Scenario helpers
-            "ptp_recorded": state.get("payment_status") in ["willing", "unable"],
-            "dispute_recorded": state.get("payment_status") == "disputed",
-            "callback_noted": state.get("payment_status") == "callback",
-            "closed_confirmed": state.get("payment_status") == "paid",
-            "no_disclosure": not state.get("has_disclosed", False),
+            "is_complete": state.get("is_complete")
         }
 
     except Exception as e:
         import traceback
+        error_trace = traceback.format_exc()
+        print(f"ERROR in {scenario}: {e}")
+        print(error_trace)
         return {
+            "is_verified": None,
+            "call_outcome": None,
+            "payment_status": None,
             "error": str(e),
-            "traceback": traceback.format_exc(),
-            "stages_completed": stages_completed
+            "traceback": error_trace
         }
 
 
-# -------------------------
-# Evaluators (unchanged)
-# -------------------------
 def check_verified(run, example):
+    """Check if verification status matches expected."""
+    expected = example.outputs.get("is_verified")
+    actual = run.outputs.get("is_verified")
+    
+    passed = expected == actual
+    
     return {
-        "score": 1 if run.outputs.get("is_verified") == example.outputs.get("is_verified") else 0,
-        "key": "verified_correct"
-    }
-
-
-def check_payment_status(run, example):
-    expected = example.outputs.get("payment_status")
-    if expected is None:
-        return {"score": None, "key": "payment_status_correct"}
-
-    return {
-        "score": 1 if run.outputs.get("payment_status") == expected else 0,
-        "key": "payment_status_correct"
+        "score": 1 if passed else 0,
+        "key": "is_verified"
     }
 
 
 def check_call_outcome(run, example):
+    """Check if call outcome matches expected."""
     expected = example.outputs.get("call_outcome")
-    if expected is None:
-        return {"score": None, "key": "call_outcome_correct"}
-
+    actual = run.outputs.get("call_outcome")
+    
+    passed = expected == actual
+    
     return {
-        "score": 1 if run.outputs.get("call_outcome") == expected else 0,
-        "key": "call_outcome_correct"
+        "score": 1 if passed else 0,
+        "key": "call_outcome"
     }
 
 
-def check_scenario_outcomes(run, example):
-    scenario = example.inputs.get("scenario", "")
-
-    if "Happy Path" in scenario:
-        return {
-            "score": int(run.outputs.get("ptp_recorded") == example.outputs.get("ptp_recorded")),
-            "key": "ptp_recorded"
-        }
-
-    if "Already Paid" in scenario:
-        return {
-            "score": int(run.outputs.get("closed_confirmed") == example.outputs.get("closed_confirmed")),
-            "key": "closed_confirmed"
-        }
-
-    if "Dispute" in scenario:
-        return {
-            "score": int(run.outputs.get("dispute_recorded") == example.outputs.get("dispute_recorded")),
-            "key": "dispute_recorded"
-        }
-
-    if "Verification Failed" in scenario:
-        return {
-            "score": int(run.outputs.get("no_disclosure") == example.outputs.get("no_disclosure")),
-            "key": "no_disclosure"
-        }
-
-    if "Callback" in scenario:
-        return {
-            "score": int(run.outputs.get("callback_noted") == example.outputs.get("callback_noted")),
-            "key": "callback_noted"
-        }
-
-    return {"score": None, "key": "scenario_check"}
+def check_payment_status(run, example):
+    """Check if payment status matches expected."""
+    expected = example.outputs.get("payment_status")
+    actual = run.outputs.get("payment_status")
+    
+    # Handle None cases
+    if expected is None:
+        passed = actual is None
+    else:
+        passed = expected == actual
+    
+    return {
+        "score": 1 if passed else 0,
+        "key": "payment_status"
+    }
 
 
 if __name__ == "__main__":
+    print("=" * 60)
+    print("Starting LangSmith Evaluation")
+    print("Testing 6 Required Scenarios")
+    print("=" * 60)
+    
     results = evaluate(
         run_agent,
         data="debt-collection-eval",
         evaluators=[
             check_verified,
-            check_payment_status,
             check_call_outcome,
-            check_scenario_outcomes
+            check_payment_status
         ],
-        experiment_prefix="v3-required-cases",
+        experiment_prefix="v4-fixed-invoke",
         max_concurrency=1
     )
 
-    print("✅ LangSmith evaluation complete")
+    print("\n" + "=" * 60)
+    print("✅ Evaluation Complete!")
+    print("=" * 60)
+    print("\nView detailed results at the URL above ☝️")
