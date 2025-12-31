@@ -25,4 +25,5 @@ def greeting_node(state: CallState) -> dict:
             "content": message
         }],
         "stage": "greeting",
+        "awaiting_user": True,  
     }
