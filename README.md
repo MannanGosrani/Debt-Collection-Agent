@@ -11,8 +11,6 @@ This agent simulates real-world debt collection calls by:
 - Closing calls professionally
 - Tracking performance using LangSmith
 
----
-
 ## Architecture Overview
 
 ### Core Layers
@@ -25,15 +23,35 @@ This agent simulates real-world debt collection calls by:
 ### Project Structure
 
 ```
-src/
- ├── graph.py          # LangGraph flow definition
- ├── state.py          # Shared call state
- ├── data.py           # In-memory customer & call records
- ├── nodes/            # Individual conversation nodes
- └── utils/llm.py      # LLM + deterministic fallback logic
+debt-collection-agent/
+├── experiments/
+│   └── langsmith_eval.py                   # LangSmith evaluation script
+├── scripts/
+│   └── create_langsmith_dataset.py         # Dataset creation for LangSmith
+├── src/
+│   ├── nodes/                              # Conversation flow nodes
+│   │   ├── __init__.py
+│   │   ├── closing.py                      # Call closing & outcome recording
+│   │   ├── disclosure.py                   # Legal disclosure node
+│   │   ├── greeting.py                     # Initial greeting node
+│   │   ├── negotiation.py                  # Payment negotiation logic
+│   │   ├── payment_check.py                # Payment intent classification
+│   │   └── verification.py                 # Identity verification
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   └── llm.py                          # LLM + deterministic fallback
+│   ├── __init__.py
+│   ├── data.py                             # In-memory customer & call records
+│   ├── graph.py                            # LangGraph flow definition
+│   └── state.py                            # Shared call state
+├── tests/
+│   └── test_scenarios.py                   # Test scenarios
+├── .gitignore                              # Git ignore rules
+├── .env.example                            # Environment variables template
+├── main.py                                 # CLI for manual testing
+├── README.md                               # Project documentation
+└── requirements.txt                        # Python dependencies
 ```
-
----
 
 ## Team Contributions
 
@@ -59,9 +77,7 @@ src/
 - Negotiation flow (EMI, partial, deferred payments)
 - Call closing logic and outcome recording
 
----
-
-## ⚙️ Setup Instructions
+## Setup Instructions
 
 ### 1️. Clone the Repository
 
@@ -86,8 +102,6 @@ pip install -r requirements.txt
 
 > `pytest` is **not required** to run this project.
 
----
-
 ## Environment Variables
 
 Create a `.env` file in the project root:
@@ -105,8 +119,6 @@ LANGSMITH_PROJECT=debt-collection-agent
 ```
 
 > **Never commit `.env` to GitHub**
-
----
 
 ## Running the Agent (Manual CLI)
 
@@ -127,8 +139,6 @@ Available test customers:
 ```
 
 You can then simulate a real conversation step-by-step.
-
----
 
 ## LangSmith Observability & Evaluation
 
@@ -164,8 +174,6 @@ Results are viewable in:
 LangSmith → Datasets → debt-collection-eval
 ```
 
----
-
 ## Evaluation Logic
 
 Custom evaluator example:
@@ -174,8 +182,6 @@ Custom evaluator example:
 
 Experiments are versioned automatically (`v1-*`) for comparison.
 
----
-
 ## Design Decisions
 
 - **LangGraph** chosen for explicit state transitions and auditability
@@ -183,12 +189,3 @@ Experiments are versioned automatically (`v1-*`) for comparison.
 - **Deterministic fallback** added to prevent LLM failures blocking execution
 - No external databases — fully self-contained as per assignment scope
 
----
-
-## Current Status
-
-- ✅ All core flows implemented
-- ✅ Team contributions merged
-- ✅ LangSmith evaluation integrated
-- ✅ Manual CLI testing functional
-- ✅ Ready for review / submission
