@@ -1,23 +1,30 @@
-# src/nodes/payment_check.py
-
 from ..state import CallState
-from ..utils.llm import classify_intent
+from src.utils.llm import classify_intent
 
 def payment_check_node(state: CallState) -> dict:
-    """
-    Decide what the customer wants to do regarding payment.
-    Uses LLM classification.
-    """
+    user_input = state.get("last_user_input")
 
-    user_input = state["last_user_input"]
+    if not user_input:
+        return {
+            "stage": "payment_check",
+            "awaiting_user": True,
+        }
 
-    intent = classify_intent(user_input).strip().lower()
+    intent = classify_intent(user_input).lower()
 
-    valid = ["paid", "disputed", "unable", "willing", "callback"]
-    if intent not in valid:
-        intent = "unable"  # safe default
+    mapping = {
+        "paid": "paid",
+        "dispute": "disputed",
+        "unable": "unable",
+        "willing": "willing",
+        "callback": "callback",
+    }
+
+    payment_status = mapping.get(intent, "unknown")
 
     return {
-        "payment_status": intent,
-        "stage": "payment_check"
+        "payment_status": payment_status,
+        "stage": "payment_check",
+        "awaiting_user": False,
+        "last_user_input": None,
     }

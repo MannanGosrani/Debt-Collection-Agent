@@ -9,41 +9,63 @@ def verification_node(state: CallState) -> dict:
     Allows max 3 attempts.
     """
 
-    attempts = state["verification_attempts"]
-    user_input = state["last_user_input"].lower().strip()
+    # Skip verification if already verified
+    if state.get("is_verified"):
+        return {
+            "stage": "verified",
+            "awaiting_user": False,
+        }
+
+    attempts = state.get("verification_attempts", 0)
+    user_input = state.get("last_user_input")
     expected_dob = state["customer_dob"].lower()
 
-    # First attempt: ask DOB
+    # First time - ask for DOB
     if attempts == 0:
         return {
+            "verification_attempts": 1,
             "messages": state["messages"] + [{
                 "role": "assistant",
                 "content": "For security purposes, could you please confirm your date of birth?"
             }],
-            "verification_attempts": 1,
             "stage": "verification",
+            "awaiting_user": True,
+            "last_user_input": None,
         }
 
-    # Simple DOB match (refine later if needed)
-    dob_match = (
-        expected_dob in user_input or
-        expected_dob.replace("-", "/") in user_input
-    )
+    # If awaiting user input or no input provided, don't process
+    if state.get("awaiting_user") or not user_input or user_input.strip() == "":
+        return {
+            "stage": "verification",
+            "awaiting_user": True,
+        }
 
-    if dob_match:
+    user_input = user_input.lower().strip()
+
+    # Check if DOB matches (support multiple formats)
+    dob_variations = [
+        expected_dob,
+        expected_dob.replace("-", "/"),
+        expected_dob.replace("-", " "),
+    ]
+    
+    if any(dob in user_input for dob in dob_variations):
         return {
             "is_verified": True,
             "messages": state["messages"] + [{
                 "role": "assistant",
                 "content": "Thank you for confirming your details."
             }],
-            "stage": "verification",
+            "stage": "verified",
+            "awaiting_user": False,
+            "last_user_input": None,
         }
 
-    # Incorrect DOB
+    # Incorrect DOB - increment attempts
     new_attempts = attempts + 1
 
-    if new_attempts >= 3:
+    # Max attempts reached (>= 4 means 3 failed attempts after initial ask)
+    if new_attempts >= 4:
         return {
             "verification_attempts": new_attempts,
             "is_verified": False,
@@ -51,19 +73,24 @@ def verification_node(state: CallState) -> dict:
             "messages": state["messages"] + [{
                 "role": "assistant",
                 "content": (
-                    "I'm sorry, I’m unable to verify your identity. "
+                    "I'm sorry, I'm unable to verify your identity. "
                     "Please contact our support team for further assistance. Goodbye."
                 )
             }],
             "is_complete": True,
             "stage": "closing",
+            "awaiting_user": False,
+            "last_user_input": None,
         }
 
+    # Allow retry
     return {
         "verification_attempts": new_attempts,
         "messages": state["messages"] + [{
             "role": "assistant",
-            "content": "That doesn’t match our records. Please confirm your date of birth again."
+            "content": "That doesn't match our records. Please confirm your date of birth again."
         }],
         "stage": "verification",
+        "awaiting_user": True,
+        "last_user_input": None,
     }
