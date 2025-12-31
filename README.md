@@ -65,7 +65,7 @@ debt-collection-agent/
 - Debugged and resolved verification flow bugs
 - Final integration, testing, and documentation
 
-### Atharva
+### Atharva Ghuge
 - Identity verification flow implementation
 - Verification node with DOB-based authentication
 - Verification failure and retry logic (max 3 attempts)
