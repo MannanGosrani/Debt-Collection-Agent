@@ -40,7 +40,7 @@ class CallState(TypedDict):
     last_user_input: Optional[str]
     awaiting_user: bool
     has_greeted: bool
-    has_disclosed: bool  # NEW: Track if disclosure happened
+    has_disclosed: bool  
     
     # === Customer Info ===
     customer_id: str

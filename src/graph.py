@@ -11,59 +11,65 @@ from src.nodes.negotiation import negotiation_node
 from src.nodes.closing import closing_node
 
 
-def route_from_greeting(state: CallState) -> str:
-    """Route after greeting"""
-    if state.get("is_complete"):
-        return END
-    if state.get("awaiting_user"):
-        return END
-    return "verification"
-
-
-def route_from_verification(state: CallState) -> str:
-    """Route after verification"""
-    if state.get("is_complete"):
-        return END
-    if state.get("awaiting_user"):
+def should_continue(state: CallState) -> str:
+    """
+    Main routing function that determines next step based on current stage.
+    """
+    stage = state.get("stage")
+    is_complete = state.get("is_complete")
+    awaiting_user = state.get("awaiting_user")
+    
+    # If call is complete, end
+    if is_complete:
         return END
     
-    # If verified, go to disclosure
-    if state.get("is_verified"):
+    # If awaiting user input, pause (return END to wait for user)
+    if awaiting_user:
+        return END
+    
+    # Route based on stage
+    if stage == "init":
+        return "greeting"
+    
+    elif stage == "greeting":
+        return "verification"
+    
+    elif stage == "verification":
+        if state.get("is_verified"):
+            return "disclosure"
+        return "verification"
+    
+    elif stage == "verified":
         return "disclosure"
     
-    # Stay in verification
-    return "verification"
-
-
-def route_from_disclosure(state: CallState) -> str:
-    """Route after disclosure"""
-    if state.get("is_complete"):
-        return END
-    if state.get("awaiting_user"):
-        return END
+    elif stage == "disclosure":
+        return "payment_check"
     
-    # Always go to payment_check after disclosure
-    return "payment_check"
-
-
-def route_from_payment_check(state: CallState) -> str:
-    """Route after payment check"""
-    status = state.get("payment_status")
-    
-    # Paid, disputed, or callback → closing
-    if status in ("paid", "disputed", "callback"):
+    elif stage == "payment_check":
+        payment_status = state.get("payment_status")
+        if payment_status == "willing":
+            return "negotiation"
         return "closing"
     
-    # Unable or willing → negotiation
-    if status in ("unable", "willing", "unknown"):
+    elif stage == "negotiation":
+        messages = state.get("messages", [])
+        if messages:
+            last_msg = messages[-1]
+            # If last message contains closing phrases, go to closing
+            if last_msg.get("role") == "assistant":
+                content = last_msg.get("content", "").lower()
+                closing_phrases = ["i've documented our discussion", "we'll follow up with you"]
+                if any(phrase in content for phrase in closing_phrases):
+                    return "closing"
+        
+        # Otherwise stay in negotiation
         return "negotiation"
     
-    return "closing"
-
-
-def route_from_negotiation(state: CallState) -> str:
-    """Route after negotiation"""
-    return "closing"
+    elif stage == "closing":
+        return END
+    
+    # Default: end
+    return END
 
 
 def create_graph():
@@ -77,56 +83,35 @@ def create_graph():
     graph.add_node("negotiation", negotiation_node)
     graph.add_node("closing", closing_node)
 
-    # Entry point
-    graph.set_entry_point("greeting")
-
-    # Routing
-    graph.add_conditional_edges(
-        "greeting",
-        route_from_greeting,
+    # Set conditional edges from each node
+    graph.set_conditional_entry_point(
+        should_continue,
         {
-            "verification": "verification",
-            END: END,
-        }
-    )
-
-    graph.add_conditional_edges(
-        "verification",
-        route_from_verification,
-        {
+            "greeting": "greeting",
             "verification": "verification",
             "disclosure": "disclosure",
-            END: END,
-        }
-    )
-
-    graph.add_conditional_edges(
-        "disclosure",
-        route_from_disclosure,
-        {
             "payment_check": "payment_check",
-            END: END,
-        }
-    )
-
-    graph.add_conditional_edges(
-        "payment_check",
-        route_from_payment_check,
-        {
             "negotiation": "negotiation",
             "closing": "closing",
+            END: END,
         }
     )
-
-    graph.add_conditional_edges(
-        "negotiation",
-        route_from_negotiation,
-        {
-            "closing": "closing",
-        }
-    )
-
-    graph.add_edge("closing", END)
+    
+    # Each node routes through the same conditional logic
+    for node_name in ["greeting", "verification", "disclosure", "payment_check", "negotiation", "closing"]:
+        graph.add_conditional_edges(
+            node_name,
+            should_continue,
+            {
+                "greeting": "greeting",
+                "verification": "verification",
+                "disclosure": "disclosure",
+                "payment_check": "payment_check",
+                "negotiation": "negotiation",
+                "closing": "closing",
+                END: END,
+            }
+        )
 
     return graph
 

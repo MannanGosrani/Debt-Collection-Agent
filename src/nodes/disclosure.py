@@ -9,11 +9,10 @@ def disclosure_node(state: CallState) -> dict:
     Only runs once.
     """
     
-    # Skip if already disclosed - move to next stage
+    # Skip if already disclosed - but don't change stage
     if state.get("has_disclosed"):
         return {
-            "stage": "payment_check",
-            "awaiting_user": False,
+            "awaiting_user": False,  # Don't wait again, move on
         }
     
     amount = state.get("outstanding_amount", 0)
@@ -30,7 +29,7 @@ def disclosure_node(state: CallState) -> dict:
             "role": "assistant",
             "content": message
         }],
-        "stage": "disclosure",
+        "stage": "disclosure",  # Set stage to disclosure
         "awaiting_user": True,
         "last_user_input": None,  
     }

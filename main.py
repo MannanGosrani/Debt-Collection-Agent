@@ -33,14 +33,23 @@ def main():
             
         try:
             # Debug info
-            print(f"[DEBUG] Stage: {state.get('stage')}, Awaiting: {state.get('awaiting_user')}, Verified: {state.get('is_verified')}")
+            stage = state.get('stage')
+            awaiting = state.get('awaiting_user')
+            verified = state.get('is_verified')
+            payment_status = state.get('payment_status')
+            
+            print(f"[DEBUG] Before invoke - Stage: {stage}, Awaiting: {awaiting}, Payment: {payment_status}")
             
             # Invoke the graph
             state = app.invoke(state, config={"recursion_limit": 25})
             
+            # Debug after invoke
+            print(f"[DEBUG] After invoke - Stage: {state.get('stage')}, Awaiting: {state.get('awaiting_user')}, Payment: {state.get('payment_status')}")
+            
             # Print the last agent message if it exists
-            if state.get("messages") and state["messages"][-1]["role"] == "assistant":
-                print(f"Agent: {state['messages'][-1]['content']}\n")
+            messages = state.get("messages", [])
+            if messages and messages[-1]["role"] == "assistant":
+                print(f"Agent: {messages[-1]['content']}\n")
             
             # Check if call is complete
             if state.get("is_complete"):
@@ -67,10 +76,17 @@ def main():
                 state["last_user_input"] = user_input
                 state["awaiting_user"] = False
             else:
-                # If not awaiting and not complete, something went wrong
-                print(f"\n[DEBUG] Unexpected state - Stage: {state.get('stage')}, Complete: {state.get('is_complete')}")
-                print("Ending call")
-                break
+                # If not awaiting and not complete, check stage
+                current_stage = state.get("stage")
+                
+                # If we're in a stage that should be awaiting but isn't, there might be an issue
+                if current_stage in ["greeting", "verification", "disclosure", "negotiation"]:
+                    print(f"\n[WARNING] Stage '{current_stage}' should be awaiting user input")
+                
+                # If we're not awaiting and not complete, something went wrong
+                if not state.get("awaiting_user") and not state.get("is_complete"):
+                    print(f"\n[DEBUG] Unexpected state - ending call")
+                    break
                 
         except Exception as e:
             print(f"\nError during call: {e}")
