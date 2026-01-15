@@ -59,7 +59,7 @@ def get_azure_client():
             api_key=api_key,
             api_version=api_version
         )
-        print(f"[AZURE] ✅ Successfully initialized Azure OpenAI client")
+        print(f"[AZURE] âœ… Successfully initialized Azure OpenAI client")
         return _client_cache
     except Exception as e:
         raise RuntimeError(f"Failed to initialize Azure OpenAI client: {e}")
@@ -89,8 +89,8 @@ Question asked: "{context}"
 Customer response: "{prompt}"
 
 CRITICAL RULES:
-- If asked "can you pay TODAY" and customer says "yes/okay/sure" → classify as "immediate" (full payment now)
-- If customer REPEATS commitment like "yes i already said that" when asked AGAIN → classify as "immediate" (they're frustrated at being asked twice)
+- If asked "can you pay TODAY" and customer says "yes/okay/sure" â†’ classify as "immediate" (full payment now)
+- If customer REPEATS commitment like "yes i already said that" when asked AGAIN â†’ classify as "immediate" (they're frustrated at being asked twice)
 
 Categories (choose the best match):
 - immediate: Customer agrees to pay the FULL amount TODAY/NOW (e.g., "yes" when asked "can you pay today", "I can pay now", "I'll pay today")
@@ -101,12 +101,12 @@ Categories (choose the best match):
 - unable: Customer has no money at all (e.g., "lost job", "no money", "can't afford anything")
 
 CRITICAL RULES:
-- If asked "can you pay TODAY" and customer says "yes/okay/sure" → classify as "immediate" (full payment now)
-- If customer says "I will pay tomorrow" or "I'll pay [future date]" → classify as "willing" (future commitment, NOT callback)
-- If customer says "can't pay FULL" or wants "installments" → classify as "willing" (needs payment plan)
-- If customer says "call me later" or "call me on [date/time]" WITHOUT mentioning payment → classify as "callback"
-- If customer says "busy but show me plans" → classify as "willing" (wants to see options, NOT callback)
-- If customer is sarcastic about paying → classify as "unable"
+- If asked "can you pay TODAY" and customer says "yes/okay/sure" â†’ classify as "immediate" (full payment now)
+- If customer says "I will pay tomorrow" or "I'll pay [future date]" â†’ classify as "willing" (future commitment, NOT callback)
+- If customer says "can't pay FULL" or wants "installments" â†’ classify as "willing" (needs payment plan)
+- If customer says "call me later" or "call me on [date/time]" WITHOUT mentioning payment â†’ classify as "callback"
+- If customer says "busy but show me plans" â†’ classify as "willing" (wants to see options, NOT callback)
+- If customer is sarcastic about paying â†’ classify as "unable"
 
 Return ONE word only: immediate, paid, disputed, callback, unable, or willing
 
@@ -282,7 +282,7 @@ def classify_intent_rule_based(prompt: str, context: str = "") -> str:
 
 
 # ------------------------------------------------------------------
-# Unified classifier (RULES → AZURE)
+# Unified classifier (RULES â†’ AZURE)
 # ------------------------------------------------------------------
 
 def classify_intent(prompt: str, context: str = "") -> str:
@@ -352,7 +352,7 @@ def generate_negotiation_response(
                 for i, p in enumerate(offered_plans)
             )
 
-        detected_amount_str = f"₹{detected_amount:,.0f}" if detected_amount else "None"
+        detected_amount_str = f"Rs.{detected_amount:,.0f}" if detected_amount else "None"
 
         # =========================
         # STERN SYSTEM PROMPT
@@ -389,7 +389,7 @@ YOU ARE NOT CUSTOMER SUPPORT.
 YOU ARE COLLECTIONS.
 
 PAYMENT CONTEXT:
-Outstanding amount: ₹{outstanding_amount:,.0f}
+Outstanding amount: Rs.{outstanding_amount:,.0f}
 
 AVAILABLE PLANS:
 {plans_info if plans_info else "Immediate settlement, 3-month, and 6-month plans apply"}
@@ -454,7 +454,7 @@ Generate response now.
         # Hard fallback
         return {
             "response": (
-            f"Your account remains overdue on ₹{outstanding_amount:,.0f}. "
+            f"Your account remains overdue on Rs.{outstanding_amount:,.0f}. "
             f"Charges are increasing daily. Confirm if you are proceeding with payment today."
         ),  
             "action": "continue_conversation",
@@ -465,7 +465,7 @@ Generate response now.
         print(f"[AI RESPONSE ERROR] {e}")
         return {
             "response": (
-                f"{customer_name}, your outstanding balance of ₹{outstanding_amount:,.0f} remains unpaid. "
+                f"{customer_name}, your outstanding balance of Rs.{outstanding_amount:,.0f} remains unpaid. "
                 f"Charges are accumulating daily. Immediate settlement is required to prevent escalation."
             ),
             "action": "continue_conversation",
@@ -487,13 +487,13 @@ def generate_payment_plans(outstanding_amount: float, customer_name: str) -> lis
         client = get_azure_client()
         deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
         
-        prompt = f"""Create 3 payment plans for a debt of ₹{outstanding_amount:,.0f}.
+        prompt = f"""Create 3 payment plans for a debt of Rs.{outstanding_amount:,.0f}.
 
 Return ONLY a JSON array with this exact structure:
 [
-  {{"name": "Immediate Settlement", "description": "Pay full amount with 5% discount within 7 days: ₹{int(outstanding_amount * 0.95):,}"}},
-  {{"name": "3-Month Installment", "description": "Pay in 3 monthly installments of ₹{int(outstanding_amount / 3):,} each"}},
-  {{"name": "6-Month Installment", "description": "Pay in 6 monthly installments of ₹{int(outstanding_amount / 6):,} each"}}
+  {{"name": "Immediate Settlement", "description": "Pay full amount with 5% discount within 7 days: Rs.{int(outstanding_amount * 0.95):,}"}},
+  {{"name": "3-Month Installment", "description": "Pay in 3 monthly installments of Rs.{int(outstanding_amount / 3):,} each"}},
+  {{"name": "6-Month Installment", "description": "Pay in 6 monthly installments of Rs.{int(outstanding_amount / 6):,} each"}}
 ]
 
 Return only the JSON array, nothing else."""
@@ -543,21 +543,21 @@ def generate_fallback_plans(amount: float) -> list:
     discount = int(amount * 0.05)
     plans.append({
         "name": "Immediate Settlement",
-        "description": f"Pay ₹{amount - discount:,.0f} (5% discount) in full within 7 days"
+        "description": f"Pay Rs.{amount - discount:,.0f} (5% discount) in full within 7 days"
     })
     
     # Plan 2: 3-month installment
     monthly_3 = int(amount / 3)
     plans.append({
         "name": "3-Month Installment",
-        "description": f"Pay ₹{monthly_3:,.0f} per month for 3 months"
+        "description": f"Pay Rs.{monthly_3:,.0f} per month for 3 months"
     })
     
     # Plan 3: 6-month installment
     monthly_6 = int(amount / 6)
     plans.append({
         "name": "6-Month Installment",
-        "description": f"Pay ₹{monthly_6:,.0f} per month for 6 months"
+        "description": f"Pay Rs.{monthly_6:,.0f} per month for 6 months"
     })
     
     print(f"[PLANS] Using fallback plans ({len(plans)} options)")
@@ -607,7 +607,7 @@ def generate_ai_response(
     # Build context string
     context_parts = []
     if outstanding_amount is not None:
-        context_parts.append(f"Outstanding: ₹{outstanding_amount:,.0f}")
+        context_parts.append(f"Outstanding: Rs.{outstanding_amount:,.0f}")
     if days_overdue is not None:
         context_parts.append(f"{days_overdue} days overdue")
     
@@ -638,7 +638,7 @@ def generate_ai_response(
 
 Key phrases to use when appropriate:
 - "Your credit score is being impacted right now"
-- "Late charges of ₹X/day are accumulating"
+- "Late charges of Rs.X/day are accumulating"
 - "Legal action may be initiated within 7 days"
 - "This will affect your ability to get loans, jobs, or rentals"
 - "I need a specific date/amount"

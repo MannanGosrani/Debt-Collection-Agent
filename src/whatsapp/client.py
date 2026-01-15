@@ -113,4 +113,3 @@ class WhatsAppClient:
         except requests.exceptions.RequestException as e:
             logger.error(f"Mark as read request exception: {e}")
             return False
-

@@ -17,11 +17,6 @@ def should_continue(state: CallState) -> str:
     Main routing function that determines next step based on current stage.
     """
     
-    #  HARD STOP AFTER ESCALATION
-    if state.get("stage") == "escalation":
-        print("[ROUTING] Escalation reached — ending conversation")
-        return END
-    
     stage = state.get("stage")
     is_complete = state.get("is_complete")
     awaiting_user = state.get("awaiting_user")
@@ -30,7 +25,7 @@ def should_continue(state: CallState) -> str:
     if is_complete:
         return END
     
-    # If awaiting user input, pause (return END to wait for user)
+    # If awaiting user input, pause
     if awaiting_user:
         return END
     
@@ -47,76 +42,99 @@ def should_continue(state: CallState) -> str:
     elif stage == "payment_check":
         payment_status = state.get("payment_status")
         
-        # CRITICAL: If immediate payment was recorded AND marked complete, end
-        if state.get("is_complete") and state.get("ptp_id"):
-            print("[ROUTING] Immediate payment recorded and complete, ending")
-            return END
+        # If immediate payment was recorded (has reason), go to negotiation to finalize
+        if state.get("awaiting_reason_for_delay") and state.get("pending_ptp_amount"):
+            print("[ROUTING] Collecting reason for immediate payment")
+            return "negotiation"
         
-        # CRITICAL: If immediate payment was recorded (PTP exists), go directly to closing
-        if state.get("ptp_id") and payment_status == "willing":
-            print("[ROUTING] Immediate PTP recorded, going to closing")
-            return "closing"
-               
-        # NEW: If customer claims paid, verify first
+        # If customer claims paid, verify first
         if payment_status == "paid":
             print("[ROUTING] Paid claim, going to paid_verification")
             return "paid_verification"
+        
+        # If callback - check callback_mode
+        if payment_status == "callback":
+            callback_mode = state.get("callback_mode")
+            
+            if callback_mode == "partial_payment_attempt":
+                # Stay in payment_check to see if they commit to partial
+                print("[ROUTING] Callback - waiting for partial payment response")
+                return END
+            else:
+                # Direct callback request without negotiation attempt
+                print("[ROUTING] Callback without payment, going to closing")
+                return "closing"
         
         # If customer wants to negotiate, go to negotiation
         if payment_status == "willing":
             print("[ROUTING] Willing, going to negotiation")
             return "negotiation"
         
-        # All other statuses (disputed, callback, unable) go to closing
+        # All other statuses (disputed, unable) go to closing
         print(f"[ROUTING] {payment_status}, going to closing")
         return "closing"
     
     elif stage == "paid_verification":
-        # After verification, route based on updated payment_status
         payment_status = state.get("payment_status")
         
         if payment_status == "paid":
-            # Verified or at least acknowledged
             print("[ROUTING] Verification done, going to closing")
             return "closing"
         elif payment_status == "willing":
-            # No proof, route to negotiation
             print("[ROUTING] No proof, going to negotiation")
             return "negotiation"
         
-        # Fallback
         return "closing"
     
     elif stage == "negotiation":
-        # Check if PTP saved
+        # Check if escalated - go to closing
+        if state.get("has_escalated"):
+            print("[ROUTING] Escalated, going to closing")
+            return "closing"
+        
+        # Check if PTP saved and WhatsApp confirmation complete
+        if state.get("ptp_id") and state.get("is_complete"):
+            print("[ROUTING] PTP confirmed via WhatsApp, ending")
+            return END
+        
+        # Check if awaiting reason before recording PTP
+        if state.get("awaiting_reason_for_delay"):
+            print("[ROUTING] Waiting for delay reason")
+            return END
+        
+        # Check if awaiting WhatsApp confirmation
+        if state.get("awaiting_whatsapp_confirmation"):
+            print("[ROUTING] Waiting for WhatsApp confirmation")
+            return END
+        
+        # Check if PTP saved - go to closing
         if state.get("ptp_id"):
             print("[ROUTING] PTP saved in negotiation, going to closing")
             return "closing"
-        
-        # Check for closing signals
-        messages = state.get("messages", [])
-        if messages:
-            last_msg = messages[-1]
-            if last_msg.get("role") == "assistant":
-                content = last_msg.get("content", "").lower()
-                closing_phrases = ["i've documented our discussion", "we'll follow up with you"]
-                if any(phrase in content for phrase in closing_phrases):
-                    print("[ROUTING] Closing phrase detected, going to closing")
-                    return "closing"
         
         # Stay in negotiation
         return "negotiation"
     
     elif stage == "closing":
+        # Check if collecting callback reason
+        if state.get("awaiting_callback_reason"):
+            print("[ROUTING] Waiting for callback reason")
+            return END
+        
+        # Check if collecting escalation reason
+        if state.get("awaiting_escalation_reason"):
+            print("[ROUTING] Waiting for escalation reason")
+            return END
+        
         # Check if asking question and waiting for response
         if state.get("closing_question_asked") and not state.get("is_complete"):
             print("[ROUTING] Closing question asked, staying in closing")
             return "closing"
+        
         return END
     
     # Default: end
     return END
-
 
 def create_graph():
     graph = StateGraph(CallState)
@@ -163,6 +181,5 @@ def create_graph():
         )
 
     return graph
-
 
 app = create_graph().compile()

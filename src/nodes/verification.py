@@ -70,7 +70,7 @@ def normalize_dob_input(user_input: str, expected_dob: str) -> bool:
                 if day == expected_day:
                     # If year provided, must match; if not provided, still accept
                     if year is None or year == expected_year:
-                        print(f"[VERIFICATION] ✅ Matched natural language: '{user_input}'")
+                        print(f"[VERIFICATION] âœ… Matched natural language: '{user_input}'")
                         return True
     
     # PRIORITY 2: Check for standard numeric formats
@@ -83,7 +83,7 @@ def normalize_dob_input(user_input: str, expected_dob: str) -> bool:
     
     for format_variant in standard_formats:
         if format_variant in user_lower:
-            print(f"[VERIFICATION] ✅ Matched standard format: '{user_input}'")
+            print(f"[VERIFICATION] âœ… Matched standard format: '{user_input}'")
             return True
     
     # PRIORITY 3: Check for partial match (DD-MM without year)
@@ -96,7 +96,7 @@ def normalize_dob_input(user_input: str, expected_dob: str) -> bool:
     
     for partial_variant in partial_variations:
         if partial_variant in user_lower:
-            print(f"[VERIFICATION] ✅ Matched partial date: '{user_input}'")
+            print(f"[VERIFICATION] âœ… Matched partial date: '{user_input}'")
             return True
     
     # PRIORITY 4: Handle US format "MM/DD/YYYY" or "Month DD, YYYY"
@@ -109,10 +109,10 @@ def normalize_dob_input(user_input: str, expected_dob: str) -> bool:
     
     for us_variant in us_variations:
         if us_variant in user_lower:
-            print(f"[VERIFICATION] ✅ Matched US format: '{user_input}'")
+            print(f"[VERIFICATION] âœ… Matched US format: '{user_input}'")
             return True
     
-    print(f"[VERIFICATION] ❌ No match for: '{user_input}'")
+    print(f"[VERIFICATION] âŒ No match for: '{user_input}'")
     return False
 
 
@@ -161,7 +161,7 @@ def verification_node(state: CallState) -> dict:
             "is_verified": True,
             "messages": state["messages"] + [{
                 "role": "assistant",
-                "content": "Great, thanks for confirming! ✅"
+                "content": "Great, thanks for confirming! âœ…"
             }],
             "stage": "verified",
             "awaiting_user": False,

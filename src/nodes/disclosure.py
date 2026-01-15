@@ -26,11 +26,11 @@ def disclosure_node(state: CallState) -> dict:
     # Firm, text-based disclosure (NO call framing, NO legal boilerplate)
     message = (
         f"{customer_name}, your {loan_type} account shows an outstanding balance of "
-        f"₹{amount:,.0f}, overdue by {days_overdue} days.\n\n"
+        f"Rs.{amount:,.0f}, overdue by {days_overdue} days.\n\n"
         f"Important to note:\n"
-        f"• Late charges of approximately ₹{late_charges:,.0f} have already been added\n"
-        f"• Your total payable amount is increasing daily\n"
-        f"• Continued delay will negatively impact your credit profile\n\n"
+        f"- Late charges of approximately Rs.{late_charges:,.0f} have already been added\n"
+        f"- Your total payable amount is increasing daily\n"
+        f"- Continued delay will negatively impact your credit profile\n\n"
         f"Immediate payment is the best way to stop further charges.\n"
         f"Can you clear this amount today?"
     )

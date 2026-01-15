@@ -42,9 +42,9 @@ class SessionManager:
                         session["last_activity_time"]
                     )
                 self.sessions = data
-                logger.info(f"✅ Loaded {len(self.sessions)} sessions")
+                logger.info(f" Loaded {len(self.sessions)} sessions")
         except Exception as e:
-            logger.error(f"❌ Failed to load sessions: {e}")
+            logger.error(f" Failed to load sessions: {e}")
 
     # --------------------------------------------------
     # Persist sessions to disk
@@ -75,10 +75,10 @@ class SessionManager:
             session = self.sessions[normalized]
             state: CallState = session["state"]
 
-            # HARD STOP — session already completed
+            # HARD STOP â€” session already completed
             if END_SESSION_ON_COMPLETE and state.get("is_complete"):
                 logger.info(
-                    f"🚫 Ignoring message for completed session: {normalized}"
+                    f" Ignoring message for completed session: {normalized}"
                 )
                 return None  # DO NOT continue conversation
 
@@ -91,7 +91,7 @@ class SessionManager:
         # ----------------------------------------------
         # Create new session
         # ----------------------------------------------
-        logger.info(f"🆕 Creating new session for {normalized}")
+        logger.info(f" Creating new session for {normalized}")
 
         state = create_initial_state(normalized)
 
@@ -119,7 +119,7 @@ class SessionManager:
 
         # OPTIONAL: auto-delete completed sessions
         if END_SESSION_ON_COMPLETE and state.get("is_complete"):
-            logger.info(f"🔒 Auto-ending completed session for {normalized}")
+            logger.info(f" Auto-ending completed session for {normalized}")
             self.end_session(phone_number)
             return
 
@@ -134,4 +134,4 @@ class SessionManager:
         if normalized in self.sessions:
             del self.sessions[normalized]
             self._save_sessions()
-            logger.info(f"✅ Session ended for {normalized}")
+            logger.info(f" Session ended for {normalized}")

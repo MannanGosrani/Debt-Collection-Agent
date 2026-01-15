@@ -28,7 +28,7 @@ class WhatsAppAgentHandler:
             # HARD STOP: Session already completed
             if state is None:
                 logger.info(
-                    f"🚫 Ignoring message from {from_number} — session already closed"
+                    f" Ignoring message from {from_number}  session already closed"
                 )
                 return {"status": "ignored"}
 
@@ -39,7 +39,7 @@ class WhatsAppAgentHandler:
             state["last_user_input"] = message_text
             state["awaiting_user"] = False
 
-            logger.info(f"🤖 Processing message from {from_number}")
+            logger.info(f" Processing message from {from_number}")
 
             # Run LangGraph
             updated_state = app.invoke(
@@ -57,7 +57,7 @@ class WhatsAppAgentHandler:
             # End or update session
             if updated_state.get("is_complete"):
                 logger.info(
-                    f"🔒 Ending session for {from_number} (conversation complete)"
+                    f" Ending session for {from_number} (conversation complete)"
                 )
                 self.session_manager.end_session(from_number)
             else:
@@ -66,7 +66,7 @@ class WhatsAppAgentHandler:
             return {"status": "success"}
 
         except Exception as e:
-            logger.error(f"❌ Agent error: {e}", exc_info=True)
+            logger.error(f" Agent error: {e}", exc_info=True)
             self.client.send_text_message(
                 from_number,
                 "Something went wrong. Please try again later."

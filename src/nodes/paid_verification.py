@@ -11,9 +11,9 @@ def paid_verification_node(state: CallState) -> dict:
     
     Flow:
     1. Ask for transaction ID/proof
-    2. If has proof → verify and close
-    3. If no proof → firm warning + route to negotiation
-    4. If paid unauthorized → fraud warning + negotiation
+    2. If has proof â†’ verify and close
+    3. If no proof â†’ firm warning + route to negotiation
+    4. If paid unauthorized â†’ fraud warning + negotiation
     """
     
     customer_name = state["customer_name"].split()[0]
@@ -130,8 +130,8 @@ def paid_verification_node(state: CallState) -> dict:
             days_overdue=days_overdue,
             context_note=(
                 extra_context +
-                f"(2) Account REMAINS {days_overdue} days overdue for ₹{outstanding:,.0f}. "
-                f"(3) Late charges ₹{outstanding * 0.02:,.0f}/day CONTINUE accumulating. "
+                f"(2) Account REMAINS {days_overdue} days overdue for Rs.{outstanding:,.0f}. "
+                f"(3) Late charges Rs.{outstanding * 0.02:,.0f}/day CONTINUE accumulating. "
                 f"(4) Credit score being impacted DAILY. "
                 f"(5) MUST make official payment immediately. "
                 f"Offer to discuss payment options to resolve TODAY. "
@@ -164,7 +164,7 @@ def paid_verification_node(state: CallState) -> dict:
                 "UNDERSTAND what they're saying and respond appropriately. "
                 "If still no clear proof: Be firm about needing verification. "
                 "If defensive/angry: Stay professional but firm. "
-                f"Account: {days_overdue} days overdue, ₹{outstanding:,.0f}. "
+                f"Account: {days_overdue} days overdue, Rs.{outstanding:,.0f}. "
                 "Ask again for any payment receipt or transaction ID."
             )
         )

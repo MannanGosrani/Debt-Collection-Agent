@@ -25,15 +25,15 @@ client = WhatsAppClient(
 
 session_manager = SessionManager()
 
-# 👇 Replace with the recipient number you want to test
+# ðŸ‘‡ Replace with the recipient number you want to test
 TEST_PHONE_NUMBER = "+917506319945"
 
 # Start conversation (sends template + creates session)
 success = start_conversation(client, session_manager, TEST_PHONE_NUMBER)
 
 if success:
-    print("✅ WhatsApp conversation initiated")
-    print(f"✅ Session created for {TEST_PHONE_NUMBER}")
-    print("📱 User can now reply and agent will respond")
+    print(" WhatsApp conversation initiated")
+    print(f" Session created for {TEST_PHONE_NUMBER}")
+    print(" User can now reply and agent will respond")
 else:
-    print("❌ Failed to initiate conversation")
+    print(" Failed to initiate conversation")

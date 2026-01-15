@@ -48,5 +48,5 @@ def start_conversation(
         session_manager.end_session(phone_number)
         return False
     
-    logger.info(f"✅ Conversation initiated successfully for {phone_number}")
+    logger.info(f" Conversation initiated successfully for {phone_number}")
     return True

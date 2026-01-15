@@ -95,6 +95,27 @@ class CallState(TypedDict):
     
     # === Flags ===
     is_complete: bool
+    
+    # === Reason Collection ===
+    delay_reason: Optional[str]              # Reason for payment delay
+    awaiting_reason_for_delay: Optional[bool]  # Waiting for reason before PTP
+    pending_ptp_amount: Optional[float]      # Amount to record after reason
+    pending_ptp_date: Optional[str]          # Date to record after reason
+    
+    callback_reason: Optional[str]           # Why customer needs callback
+    awaiting_callback_reason: Optional[bool] # Waiting for callback reason
+    callback_reason_collected: Optional[bool]
+    
+    escalation_reason: Optional[str]         # Why customer refused all options
+    awaiting_escalation_reason: Optional[bool]
+    escalation_reason_collected: Optional[bool]
+    
+    # === Partial Payment ===
+    partial_payment_amount: Optional[float]  # Partial amount customer can pay
+    partial_payment_remaining: Optional[float] # Remaining after partial
+    
+    # === WhatsApp Confirmation ===
+    awaiting_whatsapp_confirmation: Optional[bool]
 
 
 # =========================
@@ -172,4 +193,25 @@ def create_initial_state(phone: str) -> Optional[CallState]:
         
         # Flags
         is_complete=False,
+        
+        # Reason Collection
+        delay_reason=None,
+        awaiting_reason_for_delay=False,
+        pending_ptp_amount=None,
+        pending_ptp_date=None,
+        
+        callback_reason=None,
+        awaiting_callback_reason=False,
+        callback_reason_collected=False,
+        
+        escalation_reason=None,
+        awaiting_escalation_reason=False,
+        escalation_reason_collected=False,
+        
+        # Partial Payment
+        partial_payment_amount=None,
+        partial_payment_remaining=None,
+        
+        # WhatsApp Confirmation
+        awaiting_whatsapp_confirmation=False,
     )
