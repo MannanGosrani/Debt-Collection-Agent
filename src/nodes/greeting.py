@@ -5,8 +5,8 @@ from ..state import CallState
 
 def greeting_node(state: CallState) -> dict:
     """
-    Initial greeting.
-    Only runs once.
+    Initial greeting - professional but still conversational.
+    Less emojis, more business-like.
     """
 
     # Skip if already greeted
@@ -18,14 +18,15 @@ def greeting_node(state: CallState) -> dict:
 
     first_name = state["customer_name"].split()[0]
 
+    # Professional greeting without excessive friendliness
     message = (
         f"Hello {first_name}, good day. "
-        f"This is a call from ABC Finance. "
-        f"Am I speaking with {state['customer_name']}?"
+        f"This is ABC Finance reaching out. Am I speaking with {first_name}?"
     )
 
     return {
         "has_greeted": True,
+        "is_verified": True,
         "messages": state["messages"] + [{
             "role": "assistant",
             "content": message

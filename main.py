@@ -3,7 +3,6 @@
 from src.state import create_initial_state
 from src.graph import app
 
-
 def main():
     print("=== Debt Collection Agent Test ===")
     print("Available test customers:")

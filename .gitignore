@@ -13,5 +13,11 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Test/Debug scripts
+# Test / Debug scripts
 test_gemini_models.py
+
+# Runtime / local session data
+whatsapp_sessions.json
+
+# Local binaries / executables
+cloudflared.exe

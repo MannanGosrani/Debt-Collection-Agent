@@ -3,3 +3,10 @@ langchain
 langchain-google-genai
 python-dotenv
 langsmith
+
+# WhatsApp dependencies
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+python-multipart==0.0.6
+pyngrok==7.0.0

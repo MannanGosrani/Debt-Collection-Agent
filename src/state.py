@@ -11,6 +11,7 @@ Stage = Literal[
     "verified",
     "disclosure",
     "payment_check",
+    "paid_verification",  # NEW!
     "already_paid",
     "dispute",
     "negotiation",
@@ -58,6 +59,12 @@ class CallState(TypedDict):
     verification_attempts: int
     is_verified: bool
     
+    # === Payment Verification ===
+    verification_asked: Optional[bool]  # For paid_verification node
+    
+    # === Interactive Closing ===
+    closing_question_asked: Optional[bool]  # For closing node
+    
     # === Payment Handling ===
     payment_status: Optional[PaymentStatus]
     
@@ -73,6 +80,14 @@ class CallState(TypedDict):
     # === Negotiation ===
     offered_plans: List[dict]
     selected_plan: Optional[dict]
+    
+    # === Negotiation Control (NEW) ===
+    offer_stage: int                 # 0 = not started , 1 = immediate settlement warning , 2 = 3-month plan shown , 3 = 6-month plan shown (FINAL)
+    refusal_count: int               # Number of times customer refused
+    last_offer_made: Optional[str]   # Name of last plan offered
+    session_locked: bool             # HARD STOP after WhatsApp confirmation
+    has_escalated: bool
+
     
     # === Call Outcome ===
     call_outcome: Optional[str]
@@ -121,7 +136,13 @@ def create_initial_state(phone: str) -> Optional[CallState]:
         
         # Verification
         verification_attempts=0,
-        is_verified=False,
+        is_verified=True,
+        
+        # NEW: Payment Verification
+        verification_asked=False,
+        
+        # NEW: Interactive Closing
+        closing_question_asked=False,
         
         # Payment
         payment_status=None,
@@ -139,6 +160,12 @@ def create_initial_state(phone: str) -> Optional[CallState]:
         offered_plans=[],
         selected_plan=None,
         
+        # Negotiation Control
+        offer_stage=0,
+        refusal_count=0,
+        last_offer_made=None,
+        session_locked=False,
+
         # Outcome
         call_outcome=None,
         call_summary=None,
