@@ -6,7 +6,7 @@ from ..state import CallState
 def greeting_node(state: CallState) -> dict:
     """
     Initial greeting - professional but still conversational.
-    Less emojis, more business-like.
+    Triggered when customer sends first message.
     """
 
     # Skip if already greeted
@@ -17,12 +17,29 @@ def greeting_node(state: CallState) -> dict:
         }
 
     first_name = state["customer_name"].split()[0]
+    
+    # Check if customer has sent a message first
+    messages = state.get("messages", [])
+    customer_initiated = False
+    
+    if messages and messages[-1].get("role") == "user":
+        customer_initiated = True
+        customer_message = messages[-1].get("content", "").lower()
+        print(f"[GREETING] Customer initiated with: '{customer_message}'")
 
-    # Professional greeting without excessive friendliness
-    message = (
-        f"Hello {first_name}, good day. "
-        f"This is ABC Finance reaching out. Am I speaking with {first_name}?"
-    )
+    # Professional greeting - acknowledging their message if they sent one
+    if customer_initiated:
+        message = (
+            f"Hello {first_name}, good day. "
+            f"This is ABC Finance reaching out regarding your account. "
+            f"Am I speaking with {first_name}?"
+        )
+    else:
+        # Fallback if somehow agent speaks first
+        message = (
+            f"Hello {first_name}, good day. "
+            f"This is ABC Finance reaching out. Am I speaking with {first_name}?"
+        )
 
     return {
         "has_greeted": True,

@@ -1,3 +1,5 @@
+# src/whatsapp/agent_handler.py
+
 import logging
 from src.graph import app
 from src.whatsapp.session_manager import SessionManager
@@ -40,6 +42,7 @@ class WhatsAppAgentHandler:
             state["awaiting_user"] = False
 
             logger.info(f"🤖 Processing message from {from_number}")
+            logger.info(f"📊 Stage: {state.get('stage')}, Has greeted: {state.get('has_greeted')}")
 
             # Run LangGraph
             updated_state = app.invoke(
@@ -47,12 +50,19 @@ class WhatsAppAgentHandler:
                 config={"recursion_limit": 25}
             )
 
+            logger.info(f"✅ Graph completed. New stage: {updated_state.get('stage')}")
+
             # Send assistant response if present
             if updated_state.get("messages"):
                 last_msg = updated_state["messages"][-1]
+                logger.info(f"📤 Last message role: {last_msg.get('role')}")
+                
                 if last_msg.get("role") == "assistant":
                     reply = format_for_whatsapp(last_msg["content"])
+                    logger.info(f"📨 Sending reply: {reply[:100]}...")
                     self.client.send_text_message(from_number, reply)
+                else:
+                    logger.warning(f"⚠️ Last message was not from assistant: {last_msg.get('role')}")
 
             # End or update session
             if updated_state.get("is_complete"):

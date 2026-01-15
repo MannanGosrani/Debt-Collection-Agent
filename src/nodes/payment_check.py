@@ -8,9 +8,8 @@ from datetime import datetime
 def payment_check_node(state: CallState) -> dict:
     """
     Classify customer's payment intent using Azure-powered classification.
-    
-    This node determines the customer's response to the debt disclosure
-    and routes them to the appropriate next step.
+
+    For CALLBACK requests: Ask if they can pay SOME amount now before scheduling callback.
     """
 
     user_input = state.get("last_user_input")
@@ -22,73 +21,136 @@ def payment_check_node(state: CallState) -> dict:
             "awaiting_user": True,
         }
 
-    # Get the disclosure message (the question that was asked)
+    # Check for conversation end requests
+    user_lower = user_input.lower().strip()
+    end_keywords = [
+        "end convo", "end conversation", "end chat", "end call",
+        "stop", "exit", "quit",
+        "goodbye", "good bye", "bye", "by",
+        "i don't want to talk", "don't want to talk", "not interested",
+        "leave me alone", "stop calling", "stop messaging"
+    ]
+
+    if any(keyword in user_lower for keyword in end_keywords):
+        print("[PAYMENT_CHECK] User requested to end conversation")
+        customer_name = state["customer_name"].split()[0]
+        outstanding = state.get("outstanding_amount", 0)
+        days_overdue = state.get("days_past_due", 0)
+
+        response = (
+            f"{customer_name}, I understand you wish to end this conversation.\n\n"
+            f"However, please be aware:\n"
+            f"• Your account remains {days_overdue} days overdue for ₹{outstanding:,.0f}\n"
+            f"• Late charges of ₹{outstanding * 0.02:,.0f}/day continue to accumulate\n"
+            f"• Your credit score is being impacted daily\n"
+            f"• Legal action may be initiated if this remains unresolved\n\n"
+            f"This case will be escalated. We strongly recommend making payment as soon as possible."
+        )
+
+        return {
+            "messages": state["messages"] + [{"role": "assistant", "content": response}],
+            "payment_status": "callback",
+            "callback_reason": "Customer requested to end conversation",
+            "callback_reason_collected": True,
+            "has_escalated": True,
+            "stage": "payment_check",
+            "awaiting_user": False,
+        }
+
+    # Get disclosure context
     messages = state.get("messages", [])
     disclosure_context = ""
     for msg in reversed(messages):
-        if msg.get("role") == "assistant" and ("able to clear this" in msg.get("content", "").lower() or "outstanding amount" in msg.get("content", "").lower()):
+        if msg.get("role") == "assistant" and (
+            "able to clear this" in msg.get("content", "").lower()
+            or "outstanding amount" in msg.get("content", "").lower()
+        ):
             disclosure_context = msg.get("content", "")
             break
 
-    # Classify intent using improved classifier with context
+    # Classify intent
     print(f"\n[PAYMENT_CHECK] Analyzing user input: '{user_input}'")
     intent = classify_intent(user_input, context=disclosure_context).strip().lower()
     print(f"[PAYMENT_CHECK] Classified intent: {intent}\n")
 
-    # Handle "immediate" intent - customer wants to pay full amount today
+    # =====================================================
+    # IMMEDIATE PAYMENT FLOW
+    # =====================================================
     if intent == "immediate":
-        # Get today's date
         today = datetime.now().strftime("%d-%m-%Y")
         full_amount = state.get("outstanding_amount")
         customer_name = state["customer_name"].split()[0]
-        
-        # Save PTP for immediate full payment
-        from ..data import save_ptp
-        ptp_id = save_ptp(
-            customer_id=state.get("customer_id"),
-            amount=full_amount,
-            date=today,
-            plan_type="Immediate Full Payment"
-        )
-        
-        print(f"[PAYMENT_CHECK] ✅ Immediate payment commitment - PTP ID: {ptp_id}")
-        
-        # CRITICAL: Add confirmation message and close conversation
+
         confirmation_message = (
-            f"Excellent, {customer_name}. ✅\n\n"
-            f"I've recorded your commitment to pay ₹{full_amount:,.0f} today.\n\n"
-            f"Reference Number: PTP{ptp_id}\n\n"
-            f"You'll receive payment instructions via SMS within 5 minutes. "
-            f"Please complete the payment today as committed."
+            f"Excellent, {customer_name}.\n\n"
+            f"I'll record your commitment to pay ₹{full_amount:,.0f} today.\n\n"
+            f"Before I finalize this, could you briefly tell me the reason for the payment delay?"
         )
-        
-        # Route directly to closing with PTP recorded
+
         return {
             "messages": state["messages"] + [{
                 "role": "assistant",
                 "content": confirmation_message
             }],
             "payment_status": "willing",
-            "ptp_amount": full_amount,
-            "ptp_date": today,
-            "ptp_id": ptp_id,
-            "call_outcome": "ptp_recorded",
-            "stage": "payment_check",  
-            "awaiting_user": False,
+            "pending_ptp_amount": full_amount,
+            "pending_ptp_date": today,
+            "selected_plan": {"name": "Immediate Full Payment"},
+            "awaiting_reason_for_delay": True,
+            "stage": "negotiation",
+            "awaiting_user": True,
             "last_user_input": None,
-            "is_complete": True,  
         }
 
-    # Normalize any spelling variations (just in case)
-    alias_map = {
-        "dispute": "disputed",
-        "call_back": "callback",
-        "call back": "callback",
+    # =====================================================
+    # CALLBACK FLOW (partial payment attempt first)
+    # =====================================================
+    if intent == "callback":
+        customer_name = state["customer_name"].split()[0]
+        outstanding = state.get("outstanding_amount", 0)
+        days_overdue = state.get("days_past_due", 0)
+
+        if not state.get("callback_mode"):
+            callback_response = (
+                f"{customer_name}, I understand you need time.\n\n"
+                f"However, your account is {days_overdue} days overdue for ₹{outstanding:,.0f}.\n"
+                f"Late charges of ₹{outstanding * 0.02:,.0f} per day are being added.\n\n"
+                f"Can you make a partial payment now to minimize further charges?\n\n"
+                f"How much can you pay today?"
+            )
+
+            return {
+                "messages": state["messages"] + [{
+                    "role": "assistant",
+                    "content": callback_response
+                }],
+                "payment_status": "callback",
+                "callback_mode": "partial_payment_attempt",
+                "stage": "payment_check",
+                "awaiting_user": True,
+                "last_user_input": None,
+            }
+
+        return {
+            "payment_status": "callback",
+            "stage": "closing",
+            "awaiting_user": False,
+        }
+
+    # Map intent to payment status
+    intent_to_status = {
+        "immediate": "willing",
+        "paid": "paid",
+        "disputed": "disputed",
+        "callback": "callback",
+        "unable": "unable",
+        "willing": "willing",
     }
 
-    payment_status = alias_map.get(intent, intent)
+    # Get payment status from intent mapping
+    payment_status = intent_to_status.get(intent, "willing")
 
-    # Validate that we got a valid status
+    # Validate status (just for safety)
     valid_statuses = ["paid", "disputed", "callback", "unable", "willing"]
     if payment_status not in valid_statuses:
         print(f"[WARNING] Unexpected payment status: {payment_status}, defaulting to 'willing'")
@@ -96,7 +158,6 @@ def payment_check_node(state: CallState) -> dict:
 
     return {
         "payment_status": payment_status,
-        "callback_mode": "reminder" if payment_status == "callback" else None,
         "stage": "payment_check",
         "awaiting_user": False,
         "last_user_input": None,
