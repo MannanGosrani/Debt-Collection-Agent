@@ -74,7 +74,7 @@ def extract_amount(text: str) -> float:
                 text = re.sub(r'\b(202[5-9]|203[0-9])\b', '', text)
     
     # Remove commas and currency symbols
-    text = text.replace(',', '')replace('Rs', '').replace('rs', '')
+    text = text.replace(',', '').replace('Rs', '').replace('rs', '')
     
     # CRITICAL FIX: Handle ranges like "10-15k"
     range_pattern = r'(\d+)\s*-\s*(\d+)\s*k'
