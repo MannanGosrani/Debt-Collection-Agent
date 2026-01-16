@@ -89,7 +89,7 @@ def closing_node(state: CallState) -> dict:
         
         closing_message = (
             f"I understand you're disputing this debt, {customer_name}. "
-            f"I've created a dispute ticket (Reference: DSP{dispute_id}) and our disputes team will review this carefully. "
+            f"I've created a dispute ticket (Reference: {dispute_id}) and our disputes team will review this carefully. "
             f"Our team will contact you within 3-5 business days. "
             f"However, please note that late payment charges will continue to accrue until this is resolved, "
             f"and your credit score may be impacted. "
@@ -100,6 +100,20 @@ def closing_node(state: CallState) -> dict:
         state["dispute_reason"] = dispute_reason
         
     elif payment_status == "callback":
+        # Check if we're awaiting reason AND user just provided it
+        if state.get("awaiting_callback_reason") and state.get("last_user_input"):
+            # User just provided the reason
+            reason = state.get("last_user_input", "Customer needs time")
+            print(f"[CLOSING] Callback reason collected: {reason}")
+            
+            return {
+                "callback_reason": reason,
+                "callback_reason_collected": True,
+                "awaiting_callback_reason": False,  # Clear the flag
+                "stage": "closing",
+                "awaiting_user": False,
+            }
+        
         # Check if reason collected
         if not state.get("callback_reason_collected"):
             print("[CLOSING] Collecting callback reason")
@@ -118,7 +132,7 @@ def closing_node(state: CallState) -> dict:
                 "last_user_input": None,
             }
         
-        # Reason collected
+        # Reason collected - generate final message
         callback_reason = state.get("callback_reason", "Customer requested callback")
         
         closing_message = (
@@ -130,17 +144,6 @@ def closing_node(state: CallState) -> dict:
             f"We'll follow up with a reminder shortly. I strongly recommend making a payment as soon as possible to avoid escalation."
         )
         outcome = "callback"
-        
-    # Check if collecting callback reason
-    if state.get("awaiting_callback_reason"):
-        reason = state.get("last_user_input", "Customer needs time")
-        
-        return {
-            "callback_reason": reason,
-            "callback_reason_collected": True,
-            "stage": "closing",
-            "awaiting_user": False,
-        }
     
     elif payment_status == "unable":
         closing_message = (
@@ -164,7 +167,7 @@ def closing_node(state: CallState) -> dict:
             ptp_date = state.get("ptp_date")
             
             # Generate payment link
-            payment_link = f"https://abc-finance.com/pay/PTP{ptp_id}"
+            payment_link = f"https://abc-finance.com/pay/{ptp_id}"
             
             if state.get("selected_plan"):
                 plan_name = state.get("selected_plan", {}).get("name", "payment plan")
@@ -173,7 +176,7 @@ def closing_node(state: CallState) -> dict:
                     f"- Plan: {plan_name}\n"
                     f"- Amount: Rs.{ptp_amount:,.0f}\n"
                     f"- Date: {ptp_date}\n"
-                    f"- Reference: PTP{ptp_id}\n\n"
+                    f"- Reference: {ptp_id}\n\n"
                     f"**Payment Link:** {payment_link}\n\n"
                     f"Use this link to make your payment. "
                     f"Please note: If payment is not received by the committed date, "
@@ -182,7 +185,7 @@ def closing_node(state: CallState) -> dict:
             else:
                 closing_message = (
                     f"Good decision, {customer_name}. I've documented your commitment to pay Rs.{ptp_amount:,.0f} on {ptp_date}.\n\n"
-                    f"Reference Number: PTP{ptp_id}\n\n"
+                    f"Reference Number: {ptp_id}\n\n"
                     f"**Payment Link:** {payment_link}\n\n"
                     f"Please complete the payment by {ptp_date} as committed. "
                     f"Failure to pay will result in additional late charges and potential legal action."
