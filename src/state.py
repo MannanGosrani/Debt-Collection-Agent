@@ -133,7 +133,8 @@ def create_initial_state(phone: str) -> Optional[CallState]:
     customer = data["customer"]
     loan = data["loan"]
     
-    return CallState(
+    state = CallState(
+        
         # Conversation
         messages=[],
         stage="init",
@@ -159,10 +160,10 @@ def create_initial_state(phone: str) -> Optional[CallState]:
         verification_attempts=0,
         is_verified=True,
         
-        # NEW: Payment Verification
+        # Payment Verification
         verification_asked=False,
         
-        # NEW: Interactive Closing
+        # Interactive Closing
         closing_question_asked=False,
         
         # Payment
@@ -186,7 +187,8 @@ def create_initial_state(phone: str) -> Optional[CallState]:
         refusal_count=0,
         last_offer_made=None,
         session_locked=False,
-
+        has_escalated=False,
+        
         # Outcome
         call_outcome=None,
         call_summary=None,
@@ -215,3 +217,40 @@ def create_initial_state(phone: str) -> Optional[CallState]:
         # WhatsApp Confirmation
         awaiting_whatsapp_confirmation=False,
     )
+
+    validate_state(state)
+    return state
+
+
+def validate_state(state: CallState):
+    """
+    Enforces hard invariants on CallState.
+    Raises ValueError if state is invalid.
+    """
+
+    # If awaiting reason, must be waiting for user input
+    if state.get("awaiting_reason_for_delay"):
+        if not state.get("awaiting_user"):
+            raise ValueError(
+                "Invalid state: awaiting_reason_for_delay=True but awaiting_user=False"
+            )
+
+    # If willing to pay, pending PTP details must exist
+    if state.get("payment_status") == "willing":
+        if not state.get("pending_ptp_amount") or not state.get("pending_ptp_date"):
+            raise ValueError(
+                "Invalid state: payment_status='willing' without pending PTP details"
+            )
+
+    # If PTP recorded, core fields must exist
+    if state.get("ptp_id"):
+        if not state.get("ptp_amount") or not state.get("ptp_date"):
+            raise ValueError(
+                "Invalid state: ptp_id exists without ptp_amount or ptp_date"
+            )
+
+    # If conversation is complete, must have an outcome
+    if state.get("is_complete") and not state.get("call_outcome"):
+        raise ValueError(
+            "Invalid state: is_complete=True without call_outcome"
+        )

@@ -3,6 +3,7 @@ from src.graph import app
 from src.whatsapp.session_manager import SessionManager
 from src.whatsapp.client import WhatsAppClient
 from src.whatsapp.message_formatter import format_for_whatsapp
+from src.state import validate_state
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,8 @@ class WhatsAppAgentHandler:
             state["awaiting_user"] = False
 
             logger.info(f" Processing message from {from_number}")
+            
+            validate_state(state)
 
             # Run LangGraph
             updated_state = app.invoke(
@@ -66,9 +69,37 @@ class WhatsAppAgentHandler:
             return {"status": "success"}
 
         except Exception as e:
-            logger.error(f" Agent error: {e}", exc_info=True)
+            logger.error(
+                f"[FATAL] Agent execution failed for {from_number}: {e}",
+                exc_info=True
+            )
+
+            # Attempt to persist failure context
+            try:
+                if state:
+                    self._record_failure(state, e)
+                    self.session_manager.update_session(from_number, state)
+            except Exception as persist_error:  
+                logger.error(
+                    f"[FATAL] Failed to persist error state: {persist_error}",
+                    exc_info=True
+                )
+
+            # User-safe response
             self.client.send_text_message(
                 from_number,
-                "Something went wrong. Please try again later."
+                "We’re facing a technical issue right now. "
+                "Your request has been logged and we’ll follow up shortly."
             )
+
             return {"status": "error"}
+
+        
+    def _record_failure(self, state: dict, error: Exception):
+        """
+        Persist failure details into state for debugging and audit.
+        Does NOT expose internal details to the user.
+        """
+        state["call_outcome"] = "system_error"
+        state["call_summary"] = f"Unhandled exception: {type(error).__name__}"
+        state["is_complete"] = True

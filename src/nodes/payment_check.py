@@ -1,115 +1,112 @@
 # src/nodes/payment_check.py
 
 from ..state import CallState
-from ..utils.llm import classify_intent
-from datetime import datetime
+from ..utils.llm import decide_payment_intent
 
 
 def payment_check_node(state: CallState) -> dict:
     """
-    Classify customer's payment intent using Azure-powered classification.
-    
-    For CALLBACK requests: Ask if they can pay SOME amount now before scheduling callback.
+    LLM-driven payment intent resolution.
+
+    Responsibilities:
+    - Interpret user intent using LLM
+    - Mutate state deterministically
+    - NEVER infer intent from raw text
     """
 
     user_input = state.get("last_user_input")
 
-    # If no input yet, wait for user response
-    if not user_input or user_input.strip() == "":
+    # --------------------------------------------------
+    # Safety: wait for user input
+    # --------------------------------------------------
+    if not user_input:
         return {
             "stage": "payment_check",
             "awaiting_user": True,
         }
 
-    # Get the disclosure message context
-    messages = state.get("messages", [])
-    disclosure_context = ""
-    for msg in reversed(messages):
-        if msg.get("role") == "assistant" and ("able to clear this" in msg.get("content", "").lower() or "outstanding amount" in msg.get("content", "").lower()):
-            disclosure_context = msg.get("content", "")
-            break
+    # --------------------------------------------------
+    # Ask LLM to decide intent
+    # --------------------------------------------------
+    decision = decide_payment_intent(
+        user_message=user_input,
+        state_snapshot={
+            "outstanding_amount": state["outstanding_amount"],
+            "days_past_due": state["days_past_due"],
+        }
+    )
 
-    # Classify intent
-    print(f"\n[PAYMENT_CHECK] Analyzing user input: '{user_input}'")
-    intent = classify_intent(user_input, context=disclosure_context).strip().lower()
-    print(f"[PAYMENT_CHECK] Classified intent: {intent}\n")
+    intent = decision.get("intent")
 
-    # Handle "immediate" intent
-    if intent == "immediate":
-        from datetime import datetime
-        today = datetime.now().strftime("%d-%m-%Y")
-        full_amount = state.get("outstanding_amount")
-        customer_name = state["customer_name"].split()[0]
-        
-        # Ask for reason before recording PTP
-        confirmation_message = (
-            f"Excellent, {customer_name}.\n\n"
-            f"I'll record your commitment to pay Rs.{full_amount:,.0f} today.\n\n"
-            f"Before I finalize this, could you briefly tell me the reason for the payment delay?"
-        )
-        
+    # --------------------------------------------------
+    # 1️⃣ Happy PTP – agrees to pay now
+    # --------------------------------------------------
+    if intent == "AGREE_TO_PAY":
         return {
-            "messages": state["messages"] + [{
-                "role": "assistant",
-                "content": confirmation_message
-            }],
             "payment_status": "willing",
-            "pending_ptp_amount": full_amount,
-            "pending_ptp_date": today,
-            "selected_plan": {"name": "Immediate Full Payment"},
+            "pending_ptp_amount": state["outstanding_amount"],
+            "pending_ptp_date": decision.get("date"),  # decided by LLM
             "awaiting_reason_for_delay": True,
-            "stage": "payment_check",
             "awaiting_user": True,
-            "last_user_input": None,
+            "stage": "payment_check",
         }
 
-    # Handle "callback" intent - ask if they can pay some amount now
-    if intent == "callback":
-        customer_name = state["customer_name"].split()[0]
-        outstanding = state.get("outstanding_amount", 0)
-        days_overdue = state.get("days_past_due", 0)
-        
-        print("[PAYMENT_CHECK] Callback request - asking for partial payment first")
-        
-        callback_response = (
-            f"{customer_name}, I understand you need time.\n\n"
-            f"However, your account is {days_overdue} days overdue for Rs.{outstanding:,.0f}.\n"
-            f"Late charges of Rs.{outstanding * 0.02:,.0f} per day are being added.\n\n"
-            f"Can you make a partial payment now to minimize further charges? "
-            f"Even a partial amount will help reduce the impact on your credit score.\n\n"
-            f"How much can you pay today?"
-        )
-        
+    # --------------------------------------------------
+    # 2️⃣ Already Paid
+    # --------------------------------------------------
+    if intent == "ALREADY_PAID":
         return {
-            "messages": state["messages"] + [{
-                "role": "assistant",
-                "content": callback_response
-            }],
-            "payment_status": "callback",
-            "callback_mode": "partial_payment_attempt",
-            "stage": "payment_check",
+            "payment_status": "paid",
+            "verification_asked": True,
             "awaiting_user": True,
-            "last_user_input": None,
+            "stage": "paid_verification",
         }
 
-    # Normalize intent
-    alias_map = {
-        "dispute": "disputed",
-        "call_back": "callback",
-        "call back": "callback",
-    }
+    # --------------------------------------------------
+    # 3️⃣ Cannot Pay Full – negotiation required
+    # --------------------------------------------------
+    if intent == "CANNOT_PAY_FULL":
+        return {
+            "payment_status": "willing",
+            "partial_payment_amount": decision.get("can_pay_now"),
+            "stage": "negotiation",
+            "awaiting_user": False,
+        }
 
-    payment_status = alias_map.get(intent, intent)
+    # --------------------------------------------------
+    # 4️⃣ Callback / Pay Later
+    # --------------------------------------------------
+    if intent == "CALLBACK_REQUEST":
+        return {
+            "payment_status": "callback",
+            "awaiting_callback_reason": True,
+            "awaiting_user": True,
+            "stage": "closing",
+        }
 
-    # Validate status
-    valid_statuses = ["paid", "disputed", "callback", "unable", "willing"]
-    if payment_status not in valid_statuses:
-        print(f"[WARNING] Unexpected payment status: {payment_status}, defaulting to 'willing'")
-        payment_status = "willing"
+    # --------------------------------------------------
+    # 5️⃣ Dispute
+    # --------------------------------------------------
+    if intent == "DISPUTE":
+        return {
+            "payment_status": "disputed",
+            "has_escalated": True,
+            "stage": "closing",
+            "awaiting_user": False,
+        }
 
+    # --------------------------------------------------
+    # 6️⃣ Fallback – LLM unsure
+    # --------------------------------------------------
     return {
-        "payment_status": payment_status,
+        "messages": state["messages"] + [{
+            "role": "assistant",
+            "content": (
+                "I want to make sure I help you correctly. "
+                "Could you please confirm whether you’re able to pay now, "
+                "need some time, or have already made the payment?"
+            )
+        }],
+        "awaiting_user": True,
         "stage": "payment_check",
-        "awaiting_user": False,
-        "last_user_input": None,
     }

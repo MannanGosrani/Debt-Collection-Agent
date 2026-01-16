@@ -2,9 +2,10 @@
 LLM utilities with Azure OpenAI-based intent classification and intelligent response generation.
 
 Azure OpenAI is used for:
-1. Intent classification (PRIMARY)
-2. Intelligent response generation (ALL negotiation responses)
+1. Structured payment intent decisions (JSON actions)
+2. Negotiation response generation
 3. Payment plan generation
+
 
 Rule-based patterns act as quick shortcuts for obvious cases only.
 """
@@ -16,20 +17,6 @@ import json
 import re
 
 load_dotenv()
-
-# ------------------------------------------------------------------
-# Configuration
-# ------------------------------------------------------------------
-
-# These MUST correspond to existing nodes / flows
-ALLOWED_INTENTS = [
-    "paid",
-    "disputed",
-    "callback",
-    "unable",
-    "willing",
-    "immediate",  # NEW: for immediate full payment
-]
 
 # ------------------------------------------------------------------
 # Azure OpenAI integration (PRIMARY CLASSIFIER)
@@ -64,252 +51,110 @@ def get_azure_client():
     except Exception as e:
         raise RuntimeError(f"Failed to initialize Azure OpenAI client: {e}")
 
+# =========================
+# CANONICAL PAYMENT INTENT ENGINE
+# =========================
+# This is the ONLY function allowed to decide payment intent.
+# Do NOT add rule-based or free-form intent detection elsewhere.
 
-def classify_intent_with_azure(prompt: str, context: str = "") -> str:
+def decide_payment_intent(
+    user_message: str,
+    state_snapshot: dict
+) -> dict:
     """
-    Use Azure OpenAI to intelligently classify customer intent.
-    Returns one of the ALLOWED_INTENTS.
-    
-    Args:
-        prompt: The user's response
-        context: The question that was asked (helps with classification)
+    Single LLM-driven payment intent decision engine.
+
+    Returns a SAFE dict:
+    {
+        "intent": str,
+        "date": str | None,
+        "can_pay_now": float | None
+    }
+
+    This function:
+    - NEVER throws
+    - NEVER mutates state
+    - NEVER guesses missing info
     """
-    
+
+    client = None
     try:
         client = get_azure_client()
-        deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
-    except Exception as e:
-        print(f"Error initializing Azure OpenAI: {e}")
-        return classify_intent_rule_based(prompt, context)
+    except Exception:
+        return {
+            "intent": "UNKNOWN",
+            "date": None,
+            "can_pay_now": None,
+        }
 
-    # Enhanced prompt with context awareness
-    llm_prompt = f"""Classify this customer response in a debt collection chat.
+    system_prompt = """
+You are a debt collection decision engine.
 
-Question asked: "{context}"
-Customer response: "{prompt}"
+Analyze the customer's message and determine their payment intent.
 
-CRITICAL RULES:
-- If asked "can you pay TODAY" and customer says "yes/okay/sure" â†’ classify as "immediate" (full payment now)
-- If customer REPEATS commitment like "yes i already said that" when asked AGAIN â†’ classify as "immediate" (they're frustrated at being asked twice)
+Return ONLY valid JSON. No explanations.
 
-Categories (choose the best match):
-- immediate: Customer agrees to pay the FULL amount TODAY/NOW (e.g., "yes" when asked "can you pay today", "I can pay now", "I'll pay today")
-- willing: Customer wants to negotiate/needs payment plans OR commits to pay on a FUTURE date (e.g., "I'll pay tomorrow", "can't pay full", "installment", "payment plan", "I can pay some", "I can pay next month")
-- paid: Customer claims they already made payment (e.g., "I paid", "already cleared", "payment done")
-- disputed: Customer denies the debt (e.g., "never took", "not mine", "fraud", "wrong")
-- callback: Customer wants to be called later WITHOUT committing to payment (e.g., "call me later", "busy now", "not a good time", "call me on [specific date]")
-- unable: Customer has no money at all (e.g., "lost job", "no money", "can't afford anything")
+INTENTS (choose exactly one):
+- AGREE_TO_PAY
+- ALREADY_PAID
+- CANNOT_PAY_FULL
+- CALLBACK_REQUEST
+- DISPUTE
+- UNKNOWN
 
-CRITICAL RULES:
-- If asked "can you pay TODAY" and customer says "yes/okay/sure" â†’ classify as "immediate" (full payment now)
-- If customer says "I will pay tomorrow" or "I'll pay [future date]" â†’ classify as "willing" (future commitment, NOT callback)
-- If customer says "can't pay FULL" or wants "installments" â†’ classify as "willing" (needs payment plan)
-- If customer says "call me later" or "call me on [date/time]" WITHOUT mentioning payment â†’ classify as "callback"
-- If customer says "busy but show me plans" â†’ classify as "willing" (wants to see options, NOT callback)
-- If customer is sarcastic about paying â†’ classify as "unable"
+RULES:
+- If customer agrees to pay now or today → AGREE_TO_PAY
+- If customer claims payment already made → ALREADY_PAID
+- If customer offers partial payment → CANNOT_PAY_FULL
+- If customer asks to pay later or call back → CALLBACK_REQUEST
+- If customer denies the debt → DISPUTE
+- If unclear → UNKNOWN
 
-Return ONE word only: immediate, paid, disputed, callback, unable, or willing
+Do NOT invent dates or amounts.
 
-Classification:"""
+OUTPUT JSON FORMAT:
+{
+  "intent": "<INTENT>",
+  "date": "DD-MM-YYYY or null",
+  "can_pay_now": number or null
+}
+"""
+
+    user_prompt = f"""
+Customer message:
+"{user_message}"
+
+Context:
+Outstanding amount: {state_snapshot.get("outstanding_amount")}
+Days past due: {state_snapshot.get("days_past_due")}
+"""
 
     try:
         response = client.chat.completions.create(
-            model=deployment,
+            model=os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini"),
             messages=[
-                {"role": "system", "content": "You are a classification assistant. Return only one word."},
-                {"role": "user", "content": llm_prompt}
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
             ],
-            temperature=0.1,
-            max_tokens=10
+            temperature=0,
+            max_tokens=150,
         )
-        
-        if response and response.choices and len(response.choices) > 0:
-            intent = response.choices[0].message.content.strip().lower()
-            
-            # Validate response
-            if intent in ALLOWED_INTENTS:
-                return intent
-            
-            # Try to extract valid intent from response
-            for valid_intent in ALLOWED_INTENTS:
-                if valid_intent in intent:
-                    return valid_intent
-            
-            # Fallback
-            print(f"Warning: Azure returned unexpected intent '{intent}'")
-            rule_intent = classify_intent_rule_based(prompt, context)
-            return rule_intent if rule_intent != "unknown" else "willing"
-        
-        print("Warning: No response from Azure OpenAI")
-        rule_intent = classify_intent_rule_based(prompt, context)
-        return rule_intent if rule_intent != "unknown" else "willing"
-        
-    except Exception as e:
-        print(f"Error in Azure OpenAI classification: {e}")
-        rule_intent = classify_intent_rule_based(prompt, context)
-        
-        # If rule-based found something, use it
-        if rule_intent != "unknown":
-            return rule_intent
-        
-        # Smart fallback based on context
-        return "willing"
 
+        raw = response.choices[0].message.content.strip()
+        parsed = json.loads(raw)
 
-# ------------------------------------------------------------------
-# Rule-based intent classification (FALLBACK/SHORTCUT)
-# ------------------------------------------------------------------
+        return {
+            "intent": parsed.get("intent", "UNKNOWN"),
+            "date": parsed.get("date"),
+            "can_pay_now": parsed.get("can_pay_now"),
+        }
 
-def classify_intent_rule_based(prompt: str, context: str = "") -> str:
-    """
-    Fast rule-based classification for obvious cases.
-    Returns 'unknown' if uncertain - Azure will handle these.
-    
-    Args:
-        prompt: The user's response
-        context: The question that was asked
-    """
-
-    text = prompt.lower().strip()
-    context_lower = context.lower()
-
-    # Check for simple affirmative responses to "can you pay today"
-    if "today" in context_lower or "able to" in context_lower:
-        affirmative_immediate = ["yes", "yeah", "yep", "yup", "sure", "ok", "okay", "alright", "fine", "i can", "i will"]
-        if text in affirmative_immediate or any(text.startswith(word) for word in ["yes", "yeah", "yep", "sure", "ok", "okay"]):
-            # Make sure they're not saying "yes, but..." which would indicate negotiation
-            if not any(word in text for word in ["but", "however", "can't", "cant", "cannot", "not", "full", "partial", "installment", "plan", "later", "discount", "if"]):
-                return "immediate"
-
-    # CRITICAL FIX: "tomorrow" with payment commitment = willing, NOT callback
-    if "tomorrow" in text:
-        payment_commitment_phrases = ["i will pay", "i'll pay", "will pay", "promise to pay", "can pay", "i can pay"]
-        if any(phrase in text for phrase in payment_commitment_phrases):
-            return "willing"  # This is a payment commitment, not a callback request
-
-    # Very clear "already paid" signals
-    if any(phrase in text for phrase in [
-        "already paid", "already made payment", "already cleared",
-        "payment done", "payment made", "payment cleared", "payment completed",
-        "i paid", "i've paid", "i have paid", "i made payment", "i cleared",
-        "paid last week", "paid yesterday", "paid today", "paid it",
-        "made the payment", "cleared the payment", "settled the payment",
-        "transferred", "transferred the amount", "sent the money",
-        "payment was made", "payment is done", "already settled",
-        "cleared my dues", "paid my dues", "settled my account",
-        "i thought i paid", "just paid"
-    ]):
-        return "paid"
-
-    # Very clear dispute signals
-    if any(phrase in text for phrase in [
-        "never took", "never borrowed", "never applied", "never had",
-        "haven't taken", "havent taken", "didn't take", "didnt take",
-        "not my loan", "not my account", "not my debt", "not mine",
-        "don't owe", "dont owe", "do not owe", "i don't owe",
-        "this is wrong", "this is incorrect", "this is not mine",
-        "this is not my", "this doesn't belong", "this is fraud",
-        "i didn't take", "i never took", "i never borrowed",
-        "doesn't seem right", "doesnt seem right", "does not seem right",
-        "not right", "seems wrong", "looks wrong", "appears wrong",
-        "mistake", "error", "fraud", "fraudulent", "identity theft",
-        "someone else", "wrong person", "not me", "i don't know about this",
-        "i never applied", "i never signed", "unauthorized", "not authorized",
-        "don't remember taking", "amount is wrong", "borrowed 30k", "only borrowed"
-    ]):
-        return "disputed"
-
-    # Very clear callback signals (WITHOUT payment commitment)
-    callback_without_commitment = [
-        "call later", "call me later", "call back", "callback",
-        "call me next week", "call me next month", "call me tomorrow",
-        "call me next time", "call me some other time", "call me on",
-        "call you back", "call back later", "call back tomorrow",
-        "busy now", "busy right now", "busy at the moment", "busy currently",
-        "not available", "not available now", "not available right now",
-        "out of town", "currently out", "away", "travelling", "traveling",
-        "can't talk now", "cant talk now", "cannot talk now",
-        "not a good time", "bad time", "inconvenient time", "isn't a good time", "isnt a good time",
-        "later please", "please call later", "call me when convenient",
-        "this isn't a good time", "this isnt a good time", "can't talk about this"
-    ]
-    
-    if any(phrase in text for phrase in callback_without_commitment):
-        # Make sure it's not a payment commitment with date
-        if not any(payment in text for payment in ["i will pay", "i'll pay", "can pay", "will pay"]):
-            # EXCEPTION: If they also say "show me plans", it's willing, not callback
-            if "show" in text and "plan" in text:
-                return "willing"
-            return "callback"
-
-    # Very clear financial hardship signals
-    if any(phrase in text for phrase in [
-        "lost my job", "lost job", "no job", "unemployed", "jobless",
-        "no money", "no funds", "no cash", "broke", "out of money",
-        "can't afford", "cant afford", "cannot afford", "unable to afford",
-        "financial crisis", "financial difficulty", "financial trouble",
-        "struggling", "struggling financially", "going through tough times",
-        "difficult situation", "hard time", "tough time",
-        "no income", "no salary", "no earnings", "no source of income",
-        "medical emergency", "family emergency", "emergency expenses",
-        "pull money out of thin air"  # Sarcasm
-    ]):
-        return "unable"
-
-    # Very clear willingness to negotiate (needs payment plans)
-    if any(phrase in text for phrase in [
-        "can't pay full", "cant pay full", "cannot pay full",
-        "can't pay in full", "cant pay in full", "cannot pay in full",
-        "can't pay the full", "cant pay the full", "cannot pay the full",
-        "can't pay full amount", "cant pay full amount", "cannot pay full amount",
-        "installment", "installments", "monthly payment", "monthly installments",
-        "payment plan", "payemnt plan", "pay plan", "repayment plan",
-        "can i pay in", "can pay in", "pay in installments", "pay in parts",
-        "emi", "equated monthly installment", "monthly emi",
-        "work out a plan", "work out payment", "work something out",
-        "can pay partial", "can pay some", "can pay part", "can pay portion",
-        "partial payment", "pay partial", "pay some", "pay part",
-        "pay later", "pay next month", "pay after", "pay when",
-        "let's work", "let us work", "we can work", "we can arrange",
-        "interested in paying", "want to settle", "want to clear",
-        "can manage", "can arrange", "can figure out", "can work something out",
-        "can pay", "i can give", "i'll do the", "afford", "per month",
-        "can only afford"
-    ]):
-        return "willing"
-
-    return "unknown"
-
-
-# ------------------------------------------------------------------
-# Unified classifier (RULES â†’ AZURE)
-# ------------------------------------------------------------------
-
-def classify_intent(prompt: str, context: str = "") -> str:
-    """
-    Unified intent classifier.
-    
-    Strategy:
-    1. Try fast rule-based classification for obvious cases
-    2. If uncertain (unknown), use Azure OpenAI for intelligent classification
-    3. Always guarantee a valid intent is returned
-    
-    Args:
-        prompt: The user's response
-        context: The question that was asked (helps with classification)
-    """
-    
-    rule_intent = classify_intent_rule_based(prompt, context)
-    
-    if rule_intent in ALLOWED_INTENTS:
-        print(f"[INTENT] Rule-based: {rule_intent}")
-        return rule_intent
-    
-    print(f"[INTENT] Using Azure OpenAI for: '{prompt[:50]}...'")
-    azure_intent = classify_intent_with_azure(prompt, context)
-    print(f"[INTENT] Azure classified as: {azure_intent}")
-    
-    return azure_intent
+    except Exception:
+        return {
+            "intent": "UNKNOWN",
+            "date": None,
+            "can_pay_now": None,
+        }
 
 
 # ------------------------------------------------------------------
@@ -683,3 +528,79 @@ Respond with ONLY the agent's message, no labels or preamble."""
         print(f"[ERROR] AI response generation failed: {e}")
         # Minimal fallback
         return f"I understand, {customer_name}. Let me help you resolve this. Can you tell me more about your situation?"
+    
+# ------------------------------------------------------------------
+# PAYMENT VERIFICATION DECISION ENGINE (NEW)
+# ------------------------------------------------------------------
+
+def decide_payment_verification(user_message: str) -> dict:
+    """
+    Decide whether the customer has provided valid payment proof.
+
+    Returns SAFE dict:
+    {
+        "verification_result": "HAS_PROOF" | "NO_PROOF" | "UNAUTHORIZED" | "UNCLEAR"
+    }
+
+    GUARANTEES:
+    - NEVER throws
+    - NEVER mutates state
+    - NEVER infers missing facts
+    """
+
+    try:
+        client = get_azure_client()
+    except Exception:
+        return {"verification_result": "UNCLEAR"}
+
+    system_prompt = """
+You are a debt collection verification decision engine.
+
+The customer has already been asked to provide payment proof.
+
+Classify their response strictly.
+
+RESULT TYPES:
+- HAS_PROOF → Mentions transaction ID, UTR, receipt, reference number
+- NO_PROOF → Clearly says they don't have proof
+- UNAUTHORIZED → Paid a person/agent instead of official channel
+- UNCLEAR → Anything else
+
+RULES:
+- Do NOT assume proof exists
+- Do NOT be lenient
+- If ambiguous → UNCLEAR
+
+Return ONLY valid JSON.
+
+FORMAT:
+{
+  "verification_result": "<RESULT>"
+}
+"""
+
+    user_prompt = f"""
+Customer response:
+"{user_message}"
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model=os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini"),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0,
+            max_tokens=50,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        parsed = json.loads(raw)
+
+        return {
+            "verification_result": parsed.get("verification_result", "UNCLEAR")
+        }
+
+    except Exception:
+        return {"verification_result": "UNCLEAR"}

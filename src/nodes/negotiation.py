@@ -180,8 +180,8 @@ def extract_date(text: str) -> str:
     """
     Extract date from text in various formats.
     CRITICAL FIXES:
-    - Skip "3 month plan" â†’ don't extract "3" as date
-    - Skip "10-15k" â†’ don't extract "10" as date
+    - Skip "3 month plan" -> don't extract "3" as date
+    - Skip "10-15k" -> don't extract "10" as date
     - Handle date ranges by asking for clarification
     """
     text_lower = text.lower()
@@ -467,7 +467,7 @@ def has_commitment_details(state: CallState, last_user_input: str) -> tuple:
                             plan_lower = plan['name'].lower() + ' ' + plan['description'].lower()
                             if f"{months}-month" in plan_lower or f"{months} month" in plan_lower:
                                 selected_plan = plan
-                                print(f"[PLAN DETECTION] âœ… Matched to: {plan['name']}")
+                                print(f"[PLAN DETECTION] ✅ Matched to: {plan['name']}")
                                 amount_match = re.search(r'Rs.(\d+(?:,\d+)*)', plan['description'])
                                 if amount_match:
                                     committed_amount = float(amount_match.group(1).replace(',', ''))
@@ -490,7 +490,7 @@ def has_commitment_details(state: CallState, last_user_input: str) -> tuple:
                                 amount_match = re.search(r'Rs.(\d+(?:,\d+)*)', selected_plan['description'])
                                 if amount_match:
                                     committed_amount = float(amount_match.group(1).replace(',', ''))
-                            break
+                                break
                 
             
             # Check for plan change if plan already selected
@@ -547,94 +547,48 @@ def has_commitment_details(state: CallState, last_user_input: str) -> tuple:
 
 def negotiation_node(state: CallState) -> dict:
     """
-    AI-POWERED negotiation with proper partial payment handling.
-    
-    Flow:
-    1. If customer offers partial payment â†’ Accept it â†’ Ask for remaining plan
-    2. Push for immediate full payment (2 times)
-    3. Show 3-month plan (1 time)
-    4. Show 6-month plan (1 time) 
-    5. Escalate if all refused
-    
-    ALWAYS collect reason for delay before recording PTP.
+    AI-POWERED negotiation logic.
+    Replaces hardcoded heuristics with LLM-driven flow control.
     """
     
-    # CRITICAL: Check if already escalated
+    # 1. Escalation check
     if state.get("has_escalated"):
-        print("[NEGOTIATION] Already escalated - stopping")
         return {"awaiting_user": False, "is_complete": False}
-    
+        
     customer_name = state["customer_name"].split()[0]
     amount = state["outstanding_amount"]
     last_user_input = state.get("last_user_input", "")
     messages = state.get("messages", [])
-    offered_plans = state.get("offered_plans", [])
     
-    print(f"[NEGOTIATION] Turn, User: '{last_user_input}'")
-    
-    # ================================================================
-    # PRIORITY 1: WhatsApp confirmation (after PTP recorded)
-    # ================================================================
-    if state.get("awaiting_whatsapp_confirmation") and state.get("ptp_id"):
-        user_lower = last_user_input.lower().strip()
-        confirmations = ["yes", "ok", "okay", "sure", "fine", "send", "whatsapp", "got it", "received"]
-        
-        if any(word in user_lower for word in confirmations):
-            print("[NEGOTIATION] WhatsApp confirmation received - ending conversation")
-            
-            ptp_id = state["ptp_id"]
-            ptp_amount = state["ptp_amount"]
-            ptp_date = state["ptp_date"]
-            plan_name = state.get("selected_plan", {}).get("name", "Payment Plan")
-            
-            # Generate payment link
-            payment_link = f"https://abc-finance.com/pay/PTP{ptp_id}"
-            
-            final_message = (
-                f"Perfect, {customer_name}. âœ…\n\n"
-                f"**Payment Confirmation:**\n"
-                f"- Plan: {plan_name}\n"
-                f"- Amount: Rs.{ptp_amount:,.0f}\n"
-                f"- Date: {ptp_date}\n"
-                f"- Reference: PTP{ptp_id}\n\n"
-                f"**Payment Link:** {payment_link}\n\n"
-                f"Use this link to complete your payment. "
-                f"Ensure payment is made by {ptp_date} to avoid escalation.\n\n"
-                f"This conversation is now complete."
-            )
-            
+    # 2. WhatsApp Confirmation (Strictly simplified)
+    if state.get("awaiting_whatsapp_confirmation"):
+        user_input = last_user_input.lower().strip()
+        # Only simple acceptance closes the session
+        if any(w in user_input for w in ["yes", "ok", "sure", "fine", "confirm"]):
             return {
-                "messages": state["messages"] + [{"role": "assistant", "content": final_message}],
-                "call_outcome": "ptp_recorded",
-                "stage": "negotiation",
-                "awaiting_user": False,
                 "is_complete": True,
+                "call_outcome": "ptp_confirmed",
+                "stage": "negotiation",
+                "awaiting_user": False
             }
         else:
-            # User has a question - answer it
-            response = (
-                f"I understand, {customer_name}. "
-                f"I've recorded your commitment and will send the payment link now. "
-                f"You'll receive it shortly."
-            )
-            
+            # Anything else triggers repeat
             return {
-                "messages": state["messages"] + [{"role": "assistant", "content": response}],
-                "stage": "negotiation",
+                "messages": state["messages"] + [{"role": "assistant", "content": "Please type 'Yes' to confirm receipt of the payment details."}],
                 "awaiting_user": True,
-                "last_user_input": None,
+                "stage": "negotiation"
             }
-    
-    # ================================================================
-    # PRIORITY 2: Reason collection (before recording PTP)
-    # ================================================================
+
+    # 3. Reason Collection Logic (CRITICAL: Must remain)
     if state.get("awaiting_reason_for_delay"):
-        print("[NEGOTIATION] Collecting reason for delay")
-        
-        # Save the reason
+        if not last_user_input:
+            return {
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+            
+        # Record the reason and finalize PTP
         reason = last_user_input
-        
-        # Now record PTP with reason
         ptp_amount = state.get("pending_ptp_amount")
         ptp_date = state.get("pending_ptp_date")
         plan_name = state.get("selected_plan", {}).get("name", "Payment Plan")
@@ -646,22 +600,17 @@ def negotiation_node(state: CallState) -> dict:
             plan_type=plan_name
         )
         
-        print(f"[NEGOTIATION] âœ… PTP saved with reason: {ptp_id}")
-        
-        # Generate payment link
         payment_link = f"https://abc-finance.com/pay/PTP{ptp_id}"
         
         confirmation_message = (
-            f"Thank you, {customer_name}. âœ…\n\n"
-            f"I've recorded your commitment:\n\n"
+            f"Thank you, {customer_name}. ✅\n\n"
+            f"I've recorded your commitment:\n"
             f"- Plan: {plan_name}\n"
             f"- Amount: Rs.{ptp_amount:,.0f}\n"
             f"- Date: {ptp_date}\n"
-            f"- Reference: PTP{ptp_id}\n"
             f"- Reason: {reason}\n\n"
             f"**Payment Link:** {payment_link}\n\n"
-            f"Please use this link to complete your payment by {ptp_date}. "
-            f"Confirm once you've received this information."
+            f"Please confirm you have received this."
         )
         
         return {
@@ -673,209 +622,94 @@ def negotiation_node(state: CallState) -> dict:
             "awaiting_whatsapp_confirmation": True,
             "awaiting_reason_for_delay": False,
             "stage": "negotiation",
-            "awaiting_user": True,
-            "last_user_input": None,
+            "awaiting_user": True
         }
-    
-    # ================================================================
-    # PRIORITY 3: Check for partial payment offer
-    # ================================================================
-    partial_check = extract_partial_payment_offer(last_user_input, amount)
-    
-    if partial_check["is_partial_offer"] and partial_check["amount"]:
-        print(f"[NEGOTIATION] Partial payment detected: Rs.{partial_check['amount']:,.0f}")
-        
-        partial_amount = partial_check["amount"]
-        remaining = partial_check["remaining"]
-        
-        # Check if customer already provided date
-        partial_date = extract_date(last_user_input)
-        
-        if not partial_date:
-            # Ask for date first
-            response = (
-                f"Understood, {customer_name}.\n\n"
-                f"You can pay Rs.{partial_amount:,.0f} now.\n"
-                f"Remaining balance: Rs.{remaining:,.0f}\n\n"
-                f"When will you make this initial payment of Rs.{partial_amount:,.0f}?"
-            )
-            
-            return {
-                "messages": state["messages"] + [{"role": "assistant", "content": response}],
-                "partial_payment_amount": partial_amount,
-                "partial_payment_remaining": remaining,
-                "stage": "negotiation",
-                "awaiting_user": True,
-                "last_user_input": None,
-            }
-        else:
-            # Has date - ask for reason before recording
-            response = (
-                f"Good, {customer_name}.\n\n"
-                f"I'll record Rs.{partial_amount:,.0f} to be paid on {partial_date}.\n\n"
-                f"Before I finalize this, could you briefly tell me the reason for the payment delay?"
-            )
-            
-            return {
-                "messages": state["messages"] + [{"role": "assistant", "content": response}],
-                "pending_ptp_amount": partial_amount,
-                "pending_ptp_date": partial_date,
-                "selected_plan": {"name": f"Partial Payment (Rs.{partial_amount:,.0f})"},
-                "awaiting_reason_for_delay": True,
-                "stage": "negotiation",
-                "awaiting_user": True,
-                "last_user_input": None,
-            }
-    
-    # ================================================================
-    # PRIORITY 4: Check for complete commitment (plan + date)
-    # ================================================================
-    commitment_result = has_commitment_details(state, last_user_input)
-    has_complete, committed_amount, committed_date, selected_plan = commitment_result
-    
-    if has_complete and committed_date:
-        print(f"[NEGOTIATION] Full commitment detected")
-        
-        # Use plan amount if selected
-        if selected_plan and not committed_amount:
-            amount_match = re.search(r'Rs.(\d+(?:,\d+)*)', selected_plan['description'])
-            if amount_match:
-                committed_amount = float(amount_match.group(1).replace(',', ''))
-        
-        plan_name = selected_plan['name'] if selected_plan else "Payment Plan"
-        
-        # Ask for reason before recording PTP
-        response = (
-            f"Excellent, {customer_name}.\n\n"
-            f"I'll record your commitment for **{plan_name}** starting on {committed_date}.\n\n"
-            f"Before I finalize this, could you briefly tell me the reason for the payment delay?"
-        )
-        
-        return {
-            "messages": state["messages"] + [{"role": "assistant", "content": response}],
-            "pending_ptp_amount": committed_amount,
-            "pending_ptp_date": committed_date,
-            "selected_plan": selected_plan or {"name": plan_name},
-            "awaiting_reason_for_delay": True,
-            "stage": "negotiation",
-            "awaiting_user": True,
-            "last_user_input": None,
-        }
-    
-    # ================================================================
-    # PRIORITY 5: Strict sequencing for refusals
-    # ================================================================
-    
-    # Detect negative responses
-    if is_negative_response(last_user_input):
-        print("[NEGOTIATION] Negative response detected")
-        
-        refusal_count = state.get("refusal_count", 0) + 1
-        offer_stage = refusal_count
-        late_per_day = 2000
-        
-        # STEP 1 & 2: Push immediate settlement (2 times)
-        if offer_stage <= 2:
-            response = (
-                f"{customer_name}, your account is {state.get('days_past_due', 0)} days overdue.\n\n"
-                f"Late charges of Rs.{late_per_day:,}/day are accumulating.\n"
-                f"Immediate settlement stops further charges.\n\n"
-                f"Can you make the full payment today?"
-            )
-            
-            return {
-                "messages": state["messages"] + [{"role": "assistant", "content": response}],
-                "refusal_count": refusal_count,
-                "stage": "negotiation",
-                "awaiting_user": True,
-                "last_user_input": None,
-            }
-        
-        # STEP 3: Show 3-month plan
-        elif offer_stage == 3:
-            if not offered_plans:
-                offered_plans = generate_payment_plans(amount, customer_name)
-            
-            plan_3month = offered_plans[1] if len(offered_plans) > 1 else offered_plans[0]
-            
-            response = (
-                f"{customer_name}, here is an alternative option:\n\n"
-                f"**{plan_3month['name']}**: {plan_3month['description']}\n\n"
-                f"Note: Late charges continue over 3 months, increasing total payable.\n\n"
-                f"Will you proceed with this plan?"
-            )
-            
-            return {
-                "messages": state["messages"] + [{"role": "assistant", "content": response}],
-                "offered_plans": offered_plans,
-                "refusal_count": refusal_count,
-                "stage": "negotiation",
-                "awaiting_user": True,
-                "last_user_input": None,
-            }
-        
-        # STEP 4: Show 6-month plan (FINAL)
-        elif offer_stage == 4:
-            if not offered_plans:
-                offered_plans = generate_payment_plans(amount, customer_name)
-            
-            plan_6month = offered_plans[-1]
-            
-            response = (
-                f"{customer_name}, this is the final option:\n\n"
-                f"**{plan_6month['name']}**: {plan_6month['description']}\n\n"
-                f"Over 6 months, late charges will significantly increase your total.\n\n"
-                f"Will you commit to this plan?"
-            )
-            
-            return {
-                "messages": state["messages"] + [{"role": "assistant", "content": response}],
-                "offered_plans": offered_plans,
-                "refusal_count": refusal_count,
-                "stage": "negotiation",
-                "awaiting_user": True,
-                "last_user_input": None,
-            }
-        
-        # STEP 5: Escalate
-        else:
-            print("[NEGOTIATION] All options refused - escalating")
-            
-            return {
-                "refusal_count": refusal_count,
-                "payment_status": "callback",
-                "has_escalated": True,
-                "stage": "negotiation",
-                "awaiting_user": False,
-            }
-    
-    # ================================================================
-    # DEFAULT: AI handles general conversation
-    # ================================================================
-    print("[NEGOTIATION] Using AI for general response")
-    
+
+    # 4. Generate AI Response
     ai_result = generate_negotiation_response(
-        situation="general_conversation",
+        situation="negotiation",
         customer_name=customer_name,
         outstanding_amount=amount,
         conversation_history=messages,
         last_user_input=last_user_input,
-        offered_plans=offered_plans,
-        context_note=(
-            "Be STERN but professional. "
-            "Push for commitment (amount + date). "
-            "Mention consequences: late charges, credit damage."
-        )
+        offered_plans=state.get("offered_plans")
     )
     
-    response = ai_result.get("response") if ai_result else (
-        f"{customer_name}, immediate action is required. "
-        f"Can you commit to a payment date today?"
-    )
+    # Bridge: Create state updates dict instead of mutating state directly
+    state_updates = {}
+    if ai_result.get("data"):
+        data = ai_result["data"]
+        if "amount" in data:
+            state_updates["pending_ptp_amount"] = data["amount"]
+        if "date" in data:
+            state_updates["pending_ptp_date"] = data["date"]
+
+    action = ai_result.get("action")
+    message = ai_result.get("response")
     
-    return {
-        "messages": state["messages"] + [{"role": "assistant", "content": response}],
-        "stage": "negotiation",
-        "awaiting_user": True,
-        "last_user_input": None,
-    }
+    # 5. MANDATORY ACTION SWITCH
+    if action == "ask_date":
+        return {
+            **state_updates,
+            "messages": state["messages"] + [{"role": "assistant", "content": message}],
+            "awaiting_user": True,
+            "stage": "negotiation"
+        }
+        
+    elif action == "ask_plan":
+        plans = state.get("offered_plans")
+        if not plans:
+            plans = generate_payment_plans(amount, customer_name)
+            
+        return {
+            **state_updates,
+            "messages": state["messages"] + [{"role": "assistant", "content": message}],
+            "offered_plans": plans,
+            "awaiting_user": True,
+            "stage": "negotiation"
+        }
+        
+    elif action == "save_ptp":
+        # Check invariants: check if present in current state OR in the new updates
+        current_amount = state_updates.get("pending_ptp_amount") or state.get("pending_ptp_amount")
+        current_date = state_updates.get("pending_ptp_date") or state.get("pending_ptp_date")
+
+        # FIX: Fail safely if invariants missing
+        if not current_amount or not current_date:
+            return {
+                **state_updates,
+                "messages": state["messages"] + [{
+                    "role": "assistant",
+                    "content": "I need a specific amount and date before recording this. Please confirm."
+                }],
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+
+        # Ask reason FIRST
+        return {
+            **state_updates,
+            "messages": state["messages"] + [{"role": "assistant", "content": message}],
+            "awaiting_reason_for_delay": True,
+            "awaiting_user": True,
+            "stage": "negotiation"
+        }
+        
+    elif action == "escalate":
+        return {
+            **state_updates,
+            "messages": state["messages"] + [{"role": "assistant", "content": message}],
+            "has_escalated": True,
+            "is_complete": True,
+            "call_outcome": "escalated",
+            "stage": "negotiation",
+            "awaiting_user": False
+        }
+        
+    else:
+        return {
+            **state_updates,
+            "messages": state["messages"] + [{"role": "assistant", "content": message}],
+            "awaiting_user": True,
+            "stage": "negotiation"
+        }
