@@ -601,9 +601,17 @@ def negotiation_node(state: CallState) -> dict:
 
     # 3. Reason Collection Logic (CRITICAL: Must remain)
     if state.get("awaiting_reason_for_delay"):
-        if not last_user_input or last_user_input.strip().lower() in [
-            "yes", "ok", "okay", "sure", "i can pay today"
-        ]:
+        # Clean up the input for checking
+        cleaned_input = last_user_input.strip().lower() if last_user_input else ""
+        cleaned_input = cleaned_input.replace(",", "").replace(".", "")
+        # Check if it's a non-answer (just agreement without actual reason)
+        non_answers = ["yes", "ok", "okay", "sure", "fine", "i can pay today",
+                        "i can pay", "ill pay", "i will pay", "i can", "i will"]
+        is_non_answer = not last_user_input or any(
+            cleaned_input == na or cleaned_input.startswith(na + " ") 
+            for na in non_answers
+        )
+        if is_non_answer:
             return {
                 "messages": state["messages"] + [{
                     "role": "assistant",
@@ -639,8 +647,7 @@ def negotiation_node(state: CallState) -> dict:
             f"- Amount: Rs.{ptp_amount:,.0f}\n"
             f"- Date: {ptp_date}\n"
             f"- Reason: {reason}\n\n"
-            f"**Payment Link:** {payment_link}\n\n"
-            f"Please complete the payment at your earliest convenience."
+            f"**Payment Link:** {payment_link}"
         )
 
         
@@ -678,6 +685,9 @@ def negotiation_node(state: CallState) -> dict:
     action = ai_result.get("action")
     message = ai_result.get("response")
     
+    # DEBUG: See what the LLM is deciding
+    print(f"[NEGOTIATION DEBUG] LLM Action: '{action}' for input: '{last_user_input[:50] if last_user_input else 'None'}'")
+    
     # 5. MANDATORY ACTION SWITCH
     if action == "ask_date":
         return {
@@ -701,11 +711,23 @@ def negotiation_node(state: CallState) -> dict:
         }
         
     elif action == "save_ptp":
+        print(f"[DEBUG] save_ptp action triggered!")
+        print(f"[DEBUG] state_updates: {state_updates}")
+        print(f"[DEBUG] state pending_ptp_date: {state.get('pending_ptp_date')}")
+        
         current_amount = state_updates.get("pending_ptp_amount") or state.get("pending_ptp_amount")
         current_date = state_updates.get("pending_ptp_date") or state.get("pending_ptp_date")
+        
+        print(f"[DEBUG] current_amount: {current_amount}")
+        print(f"[DEBUG] current_date BEFORE default: {current_date}")
 
         if not current_amount:
             current_amount = state.get("outstanding_amount")
+        
+        # CRITICAL FIX: Default to today if no date provided
+        if not current_date:
+            current_date = datetime.now().strftime("%d-%m-%Y")
+            print(f"[NEGOTIATION] No date provided, defaulting to today: {current_date}")
 
         return {
             "messages": state["messages"] + [{

@@ -134,7 +134,6 @@ def create_initial_state(phone: str) -> Optional[CallState]:
     loan = data["loan"]
     
     state = CallState(
-        
         # Conversation
         messages=[],
         stage="init",
@@ -229,18 +228,29 @@ def validate_state(state: CallState):
     """
 
     # If awaiting reason, must be waiting for user input
+    # UNLESS we just received input and are about to process it (intermediate state)
     if state.get("awaiting_reason_for_delay"):
-        if not state.get("awaiting_user"):
+        if not state.get("awaiting_user") and not state.get("last_user_input"):
             raise ValueError(
-                "Invalid state: awaiting_reason_for_delay=True but awaiting_user=False"
+                "Invalid state: awaiting_reason_for_delay=True but awaiting_user=False and no user input"
             )
 
     # If willing to pay, pending PTP details must exist
+    # UNLESS we're still collecting the delay reason (intermediate state is OK)
     if state.get("payment_status") == "willing":
-        if not state.get("pending_ptp_amount") or not state.get("pending_ptp_date"):
-            raise ValueError(
-                "Invalid state: payment_status='willing' without pending PTP details"
-            )
+        # Allow null date if we're still awaiting reason for delay
+        if state.get("awaiting_reason_for_delay"):
+            # During reason collection, only amount is required
+            if not state.get("pending_ptp_amount"):
+                raise ValueError(
+                    "Invalid state: awaiting_reason_for_delay without pending_ptp_amount"
+                )
+        else:
+            # After reason collection, both amount and date are required
+            if not state.get("pending_ptp_amount") or not state.get("pending_ptp_date"):
+                raise ValueError(
+                    "Invalid state: payment_status='willing' without pending PTP details"
+                )
 
     # If PTP recorded, core fields must exist
     if state.get("ptp_id"):
