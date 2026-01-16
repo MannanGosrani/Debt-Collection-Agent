@@ -6,6 +6,39 @@ from ..data import save_ptp
 from datetime import datetime, timedelta
 import re
 
+def detect_partial_payment_scenario(state: CallState, last_user_input: str) -> dict:
+    """
+    Detect if customer is offering to pay partial amount today + rest in installments.
+    Returns: {
+        "is_partial": bool,
+        "amount_today": float | None,
+        "remaining": float | None
+    }
+    """
+    text_lower = last_user_input.lower()
+    outstanding = state.get("outstanding_amount", 0)
+    
+    # Check for partial payment indicators
+    partial_indicators = [
+        "today and", "now and", "and the rest", "and rest",
+        "partial", "some now", "pay part"
+    ]
+    
+    if not any(indicator in text_lower for indicator in partial_indicators):
+        return {"is_partial": False, "amount_today": None, "remaining": None}
+    
+    # Extract the amount customer can pay today
+    amount = extract_amount(last_user_input)
+    
+    if amount and amount < outstanding:
+        return {
+            "is_partial": True,
+            "amount_today": amount,
+            "remaining": outstanding - amount
+        }
+    
+    return {"is_partial": False, "amount_today": None, "remaining": None}
+
 def extract_partial_payment_offer(text: str, outstanding_amount: float) -> dict:
     """
     Detect if customer is offering partial payment.
@@ -55,58 +88,64 @@ def extract_partial_payment_offer(text: str, outstanding_amount: float) -> dict:
 def extract_amount(text: str) -> float:
     """
     Extract monetary amount from text.
-    CRITICAL FIXES:
-    - Don't extract years like "2026" from dates
-    - Handle ranges like "10-15k"
-    - Handle percentages like "50%"
+    Handles:
+    - Commas: 100,000
+    - Indian numbering: lakh, crore
+    - K notation: 100k
+    - Various numeric formats
     """
-    text_lower = text.lower()
-    
-    # CRITICAL FIX: Skip if this looks like a date with year
-    if re.search(r'\b(202[5-9]|203[0-9])\b', text):
-        date_patterns = [
-            r'\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(202[5-9]|203[0-9])',
-            r'(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2}(?:st|nd|rd|th)?\s+(202[5-9]|203[0-9])',
-        ]
-        for pattern in date_patterns:
-            if re.search(pattern, text_lower, re.IGNORECASE):
-                print(f"[AMOUNT] Skipping year in date: {text}")
-                text = re.sub(r'\b(202[5-9]|203[0-9])\b', '', text)
-    
-    # Remove commas and currency symbols
-    text = text.replace(',', '').replace('Rs', '').replace('rs', '')
-    
-    # CRITICAL FIX: Handle ranges like "10-15k"
-    range_pattern = r'(\d+)\s*-\s*(\d+)\s*k'
-    range_match = re.search(range_pattern, text_lower)
-    if range_match:
-        print(f"[AMOUNT] Found range, need clarification: {text}")
-        return None  # Let agent ask for clarification
-    
-    # Try amounts with 'k' notation
-    k_pattern = r'(\d+(?:\.\d+)?)\s*k'
-    k_match = re.search(k_pattern, text_lower)
-    if k_match:
-        amount = float(k_match.group(1)) * 1000
-        if 100 < amount < 1000000:
-            print(f"[AMOUNT] Extracted from 'k' notation: Rs.{amount:,.0f}")
+    if not text:
+        return None
+        
+    text_lower = text.lower().strip()
+        
+    # Remove currency symbols
+    text_clean = text_lower.replace('rs', '').replace('₹', '').strip()
+        
+    # Handle "lakh" and "crore" (Indian numbering)
+    if 'lakh' in text_clean or 'lac' in text_clean:
+        # Extract the number before "lakh"
+        lakh_pattern = r'(\d+(?:\.\d+)?)\s*(?:lakh|lac)'
+        match = re.search(lakh_pattern, text_clean)
+        if match:
+            num = float(match.group(1))
+            amount = num * 100000
+            print(f"[AMOUNT] Extracted from lakh notation: Rs.{amount:,.0f}")
             return amount
+            
+    if 'crore' in text_clean or 'cr' in text_clean:
+        # Extract the number before "crore"
+        crore_pattern = r'(\d+(?:\.\d+)?)\s*(?:crore|cr)'
+        match = re.search(crore_pattern, text_clean)
+        if match:
+            num = float(match.group(1))
+            amount = num * 10000000
+            print(f"[AMOUNT] Extracted from crore notation: Rs.{amount:,.0f}")
+            return amount
+            
+    # Handle 'k' notation (100k = 100000)
+    if 'k' in text_clean:
+        k_pattern = r'(\d+(?:\.\d+)?)\s*k'
+        match = re.search(k_pattern, text_clean)
+        if match:
+            amount = float(match.group(1)) * 1000
+            if 100 < amount < 10000000:
+                print(f"[AMOUNT] Extracted from 'k' notation: Rs.{amount:,.0f}")
+                return amount
+                
+    # Remove commas and extract pure number
+    text_clean = text_clean.replace(',', '').replace(' ', '')
+        
+    # Try to extract a standalone number
+    number_pattern = r'(\d+(?:\.\d+)?)'
+    match = re.search(number_pattern, text_clean)
     
-    # Try standalone numbers (but avoid dates)
-    # Only if there's clear payment context
-    payment_context = ['pay', 'give', 'amount', 'rupees', 'rs', 'Rs.']
-    if any(word in text_lower for word in payment_context):
-        # Look for standalone numbers
-        standalone_pattern = r'\b(\d{4,})\b'
-        matches = re.findall(standalone_pattern, text)
-        for match in matches:
-            # Skip if it's a year
-            if not re.match(r'202[5-9]|203[0-9]', match):
-                amount = float(match)
-                if 100 < amount < 1000000:
-                    print(f"[AMOUNT] Extracted standalone amount: Rs.{amount:,.0f}")
-                    return amount
-    
+    if match:
+        amount = float(match.group(1))
+        if 100 < amount < 10000000:  # Reasonable range
+            print(f"[AMOUNT] Extracted standalone number: Rs.{amount:,.0f}")
+            return amount
+            
     return None
 
 
@@ -598,8 +637,55 @@ def negotiation_node(state: CallState) -> dict:
                 "stage": "negotiation"
             }
 
+    # 3. PARTIAL PAYMENT DETECTION (NEW - handles "100k today + rest in plans")
+    partial_info = detect_partial_payment_scenario(state, last_user_input)
+    
+    if partial_info["is_partial"]:
+        amount_today = partial_info["amount_today"]
+        remaining = partial_info["remaining"]
+        
+        print(f"[PARTIAL PAYMENT] Customer offers Rs.{amount_today:,.0f} today, Rs.{remaining:,.0f} remaining")
+        
+        # Ask when they'll pay the partial amount TODAY
+        response = (
+            f"I understand you can pay Rs.{amount_today:,.0f} today.\n\n"
+            f"When exactly will you make this payment today? "
+            f"Please note: Late charges of Rs.{amount * 0.02:,.0f}/day continue to accrue until full settlement."
+        )
+        
+        return {
+            "messages": state["messages"] + [{"role": "assistant", "content": response}],
+            "partial_payment_amount": amount_today,
+            "partial_payment_remaining": remaining,
+            "payment_status": "willing",
+            "awaiting_user": True,
+            "stage": "negotiation"
+        }
+    
+    # 3.5 VAGUE PARTIAL PAYMENT ("some amount today")
+    if not partial_info["is_partial"]:
+        # Check if user mentions paying "some" or "part" without specific amount
+        vague_partial_indicators = [
+            "some amount", "some money", "part of", "partial payment",
+            "pay part", "pay some", "something today"
+        ]
+        if any(indicator in last_user_input.lower() for indicator in vague_partial_indicators):
+            print(f"[PARTIAL PAYMENT] Vague offer detected, asking for specific amount")
+            
+            response = (
+                f"How much can you pay today, {customer_name}? "
+                f"Please provide a specific amount so I can calculate the remaining balance."
+            )
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": response}],
+                "payment_status": "willing",
+                "awaiting_partial_amount_clarification": True,
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
 
-    # 3. Reason Collection Logic (CRITICAL: Must remain)
+    # 4. Reason Collection Logic (CRITICAL: Must remain)
     if state.get("awaiting_reason_for_delay"):
         # Clean up the input for checking
         cleaned_input = last_user_input.strip().lower() if last_user_input else ""
@@ -659,13 +745,49 @@ def negotiation_node(state: CallState) -> dict:
             "delay_reason": reason,
             "awaiting_whatsapp_confirmation": False,
             "awaiting_reason_for_delay": False,
-            "stage": "closing",            
-            "is_complete": True,           
-            "call_outcome": "ptp_recorded", 
-            "awaiting_user": False         
+            "stage": "negotiation",
+            "awaiting_user": True
         }
+    
+    # 4.5 COLLECTING PARTIAL AMOUNT (user responded with amount)
+    if state.get("awaiting_partial_amount_clarification"):
+        # extract_amount is already defined above in this file
+        
+        amount_offered = extract_amount(last_user_input)
+        
+        if amount_offered and amount_offered < amount:
+            print(f"[PARTIAL AMOUNT] User specified Rs.{amount_offered:,.0f}")
+            
+            remaining = amount - amount_offered
+            
+            # Now ask about payment plan for remaining
+            response = (
+                f"I can accept Rs.{amount_offered:,.0f} as partial payment today.\n\n"
+                f"For the remaining Rs.{remaining:,.0f}, I can offer:\n"
+                f"• Immediate settlement: Pay within 7 days with 5% discount (Rs.{remaining * 0.95:,.0f})\n\n"
+                f"When can you pay the remaining amount?"
+            )
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": response}],
+                "partial_payment_amount": amount_offered,
+                "partial_payment_remaining": remaining,
+                "awaiting_partial_amount_clarification": False,
+                "payment_status": "willing",
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+        else:
+            # Didn't extract valid amount or amount >= outstanding
+            response = f"Please provide a specific numeric amount you can pay today."
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": response}],
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
 
-    # 4. Generate AI Response
+    # 5. Generate AI Response
     ai_result = generate_negotiation_response(
         situation="negotiation",
         customer_name=customer_name,
@@ -690,7 +812,7 @@ def negotiation_node(state: CallState) -> dict:
     # DEBUG: See what the LLM is deciding
     print(f"[NEGOTIATION DEBUG] LLM Action: '{action}' for input: '{last_user_input[:50] if last_user_input else 'None'}'")
     
-    # 5. MANDATORY ACTION SWITCH
+    # 6. MANDATORY ACTION SWITCH
     if action == "ask_date":
         return {
             **state_updates,
@@ -713,23 +835,30 @@ def negotiation_node(state: CallState) -> dict:
         }
         
     elif action == "save_ptp":
-        print(f"[DEBUG] save_ptp action triggered!")
-        print(f"[DEBUG] state_updates: {state_updates}")
-        print(f"[DEBUG] state pending_ptp_date: {state.get('pending_ptp_date')}")
-        
         current_amount = state_updates.get("pending_ptp_amount") or state.get("pending_ptp_amount")
         current_date = state_updates.get("pending_ptp_date") or state.get("pending_ptp_date")
-        
-        print(f"[DEBUG] current_amount: {current_amount}")
-        print(f"[DEBUG] current_date BEFORE default: {current_date}")
 
         if not current_amount:
             current_amount = state.get("outstanding_amount")
         
-        # CRITICAL FIX: Default to today if no date provided
-        if not current_date:
-            current_date = datetime.now().strftime("%d-%m-%Y")
-            print(f"[NEGOTIATION] No date provided, defaulting to today: {current_date}")
+        # CRITICAL FIX: Extract "today" from user input if present
+        if not current_date and last_user_input:
+            user_lower = last_user_input.lower()
+            if "today" in user_lower:
+                current_date = datetime.now().strftime("%d-%m-%Y")
+                print(f"[NEGOTIATION] Detected 'today' in user input, setting date to: {current_date}")
+            else:
+                # User didn't provide a date - ask for it instead of assuming
+                print(f"[NEGOTIATION] No date detected, need to ask for date")
+                return {
+                    "messages": state["messages"] + [{
+                        "role": "assistant",
+                        "content": "When would you like to make this payment?"
+                    }],
+                    "pending_ptp_amount": current_amount,
+                    "awaiting_user": True,
+                    "stage": "negotiation"
+                }
 
         return {
             "messages": state["messages"] + [{

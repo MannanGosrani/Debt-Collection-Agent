@@ -107,12 +107,17 @@ INTENTS (choose exactly one):
 RULES:
 - If customer agrees to pay now or today → AGREE_TO_PAY
 - If customer claims payment already made → ALREADY_PAID
-- If customer offers partial payment → CANNOT_PAY_FULL
+- If customer offers partial payment (e.g., "I can pay 100,000 today") → CANNOT_PAY_FULL
 - If customer asks to pay later or call back → CALLBACK_REQUEST
 - If customer denies the debt → DISPUTE
 - If unclear → UNKNOWN
 
-Do NOT invent dates or amounts.
+IMPORTANT: Extract numeric amounts from messages like:
+- "I can pay 100,000 today" → can_pay_now: 100000
+- "I can pay 50k now" → can_pay_now: 50000
+- "I can give you 100k" → can_pay_now: 100000
+
+Do NOT invent dates or amounts not mentioned.
 
 OUTPUT JSON FORMAT:
 {

@@ -116,6 +116,11 @@ class CallState(TypedDict):
     
     # === WhatsApp Confirmation ===
     awaiting_whatsapp_confirmation: Optional[bool]
+    
+    # === Partial Payment ===
+    partial_payment_amount: Optional[float]  # Partial amount customer can pay
+    partial_payment_remaining: Optional[float] # Remaining after partial
+    awaiting_partial_amount_clarification: Optional[bool]  # NEW - waiting for user to specify amount
 
 
 # =========================
@@ -208,13 +213,14 @@ def create_initial_state(phone: str) -> Optional[CallState]:
         escalation_reason=None,
         awaiting_escalation_reason=False,
         escalation_reason_collected=False,
+                
+        # WhatsApp Confirmation
+        awaiting_whatsapp_confirmation=False,
         
         # Partial Payment
         partial_payment_amount=None,
         partial_payment_remaining=None,
-        
-        # WhatsApp Confirmation
-        awaiting_whatsapp_confirmation=False,
+        awaiting_partial_amount_clarification=False,  
     )
 
     validate_state(state)
@@ -235,11 +241,21 @@ def validate_state(state: CallState):
                 "Invalid state: awaiting_reason_for_delay=True but awaiting_user=False and no user input"
             )
 
-    # If willing to pay, pending PTP details must exist
-    # UNLESS we're still collecting the delay reason (intermediate state is OK)
     if state.get("payment_status") == "willing":
+        # Allow partial payment flow without PTP details initially
+        if state.get("partial_payment_amount") is not None:
+            # Partial payment flow - negotiation in progress, PTP not set yet
+            pass
+        # Allow when asking for amount clarification
+        elif state.get("awaiting_partial_amount_clarification"):
+            # Asking user to specify amount - no PTP details needed yet
+            pass
+        # Allow in negotiation stage without PTP details (NEW)
+        elif state.get("stage") == "negotiation" and not state.get("pending_ptp_amount"):
+            # In negotiation, still gathering details - allow it
+            pass
         # Allow null date if we're still awaiting reason for delay
-        if state.get("awaiting_reason_for_delay"):
+        elif state.get("awaiting_reason_for_delay"):
             # During reason collection, only amount is required
             if not state.get("pending_ptp_amount"):
                 raise ValueError(
