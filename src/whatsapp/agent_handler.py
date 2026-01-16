@@ -97,9 +97,11 @@ class WhatsAppAgentHandler:
         
     def _record_failure(self, state: dict, error: Exception):
         """
-        Persist failure details into state for debugging and audit.
-        Does NOT expose internal details to the user.
+        Persist failure details without killing an active session.
         """
         state["call_outcome"] = "system_error"
         state["call_summary"] = f"Unhandled exception: {type(error).__name__}"
-        state["is_complete"] = True
+
+        # 🔑 DO NOT auto-complete session on recoverable errors
+        state["is_complete"] = False
+        state["awaiting_user"] = True

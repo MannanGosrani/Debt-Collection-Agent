@@ -560,38 +560,68 @@ def negotiation_node(state: CallState) -> dict:
     last_user_input = state.get("last_user_input", "")
     messages = state.get("messages", [])
     
-    # 2. WhatsApp Confirmation (Strictly simplified)
+    # 2. WhatsApp Confirmation (FINALIZE PTP HERE)
     if state.get("awaiting_whatsapp_confirmation"):
         user_input = last_user_input.lower().strip()
-        # Only simple acceptance closes the session
-        if any(w in user_input for w in ["yes", "ok", "sure", "fine", "confirm"]):
+
+        if any(w in user_input for w in ["yes", "ok", "sure", "fine", "confirm", "received"]):
             return {
+                # 🔒 FINALIZE PAYMENT COMMITMENT
+                "payment_status": "ptp_confirmed",
+
+                # Persist final PTP
+                "ptp_id": state.get("ptp_id"),
+                "ptp_amount": state.get("ptp_amount"),
+                "ptp_date": state.get("ptp_date"),
+
+                # Clear transient PTP state
+                "pending_ptp_amount": None,
+                "pending_ptp_date": None,
+
+                # Conversation control
+                "awaiting_whatsapp_confirmation": False,
+                "awaiting_user": False,
+
+                # Close session cleanly
                 "is_complete": True,
                 "call_outcome": "ptp_confirmed",
-                "stage": "negotiation",
-                "awaiting_user": False
+                "stage": "closing",
             }
+
         else:
-            # Anything else triggers repeat
             return {
-                "messages": state["messages"] + [{"role": "assistant", "content": "Please type 'Yes' to confirm receipt of the payment details."}],
+                "messages": state["messages"] + [{
+                    "role": "assistant",
+                    "content": "Please reply with 'Yes' to confirm receipt of the payment link."
+                }],
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
 
+
     # 3. Reason Collection Logic (CRITICAL: Must remain)
     if state.get("awaiting_reason_for_delay"):
-        if not last_user_input:
+        if not last_user_input or last_user_input.strip().lower() in [
+            "yes", "ok", "okay", "sure", "i can pay today"
+        ]:
             return {
+                "messages": state["messages"] + [{
+                    "role": "assistant",
+                    "content": "Please let me know the reason for the delay in payment."
+                }],
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
+
+        reason = last_user_input.strip()
+
             
         # Record the reason and finalize PTP
         reason = last_user_input
         ptp_amount = state.get("pending_ptp_amount")
         ptp_date = state.get("pending_ptp_date")
-        plan_name = state.get("selected_plan", {}).get("name", "Payment Plan")
+        selected_plan = state.get("selected_plan") or {}
+        plan_name = selected_plan.get("name", "Payment Plan")
         
         ptp_id = save_ptp(
             customer_id=state["customer_id"],
@@ -610,8 +640,9 @@ def negotiation_node(state: CallState) -> dict:
             f"- Date: {ptp_date}\n"
             f"- Reason: {reason}\n\n"
             f"**Payment Link:** {payment_link}\n\n"
-            f"Please confirm you have received this."
+            f"Please complete the payment at your earliest convenience."
         )
+
         
         return {
             "messages": state["messages"] + [{"role": "assistant", "content": confirmation_message}],
@@ -619,7 +650,7 @@ def negotiation_node(state: CallState) -> dict:
             "ptp_date": ptp_date,
             "ptp_id": ptp_id,
             "delay_reason": reason,
-            "awaiting_whatsapp_confirmation": True,
+            "awaiting_whatsapp_confirmation": False,
             "awaiting_reason_for_delay": False,
             "stage": "negotiation",
             "awaiting_user": True
@@ -670,30 +701,25 @@ def negotiation_node(state: CallState) -> dict:
         }
         
     elif action == "save_ptp":
-        # Check invariants: check if present in current state OR in the new updates
         current_amount = state_updates.get("pending_ptp_amount") or state.get("pending_ptp_amount")
         current_date = state_updates.get("pending_ptp_date") or state.get("pending_ptp_date")
 
-        # FIX: Fail safely if invariants missing
-        if not current_amount or not current_date:
-            return {
-                **state_updates,
-                "messages": state["messages"] + [{
-                    "role": "assistant",
-                    "content": "I need a specific amount and date before recording this. Please confirm."
-                }],
-                "awaiting_user": True,
-                "stage": "negotiation"
-            }
+        if not current_amount:
+            current_amount = state.get("outstanding_amount")
 
-        # Ask reason FIRST
         return {
-            **state_updates,
-            "messages": state["messages"] + [{"role": "assistant", "content": message}],
+            "messages": state["messages"] + [{
+                "role": "assistant",
+                "content": "Thank you. Before I proceed, may I know the reason for the delay in payment?"
+            }],
+            "pending_ptp_amount": current_amount,
+            "pending_ptp_date": current_date,
             "awaiting_reason_for_delay": True,
             "awaiting_user": True,
-            "stage": "negotiation"
+            "stage": "negotiation",
+            "last_user_input": None
         }
+
         
     elif action == "escalate":
         return {

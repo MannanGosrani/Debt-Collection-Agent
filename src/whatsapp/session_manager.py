@@ -75,7 +75,7 @@ class SessionManager:
             session = self.sessions[normalized]
             state: CallState = session["state"]
 
-            # HARD STOP â€” session already completed
+            # HARD STOP session already completed
             if END_SESSION_ON_COMPLETE and state.get("is_complete"):
                 logger.info(
                     f" Ignoring message for completed session: {normalized}"
