@@ -80,15 +80,7 @@ class CallState(TypedDict):
     # === Negotiation ===
     offered_plans: List[dict]
     selected_plan: Optional[dict]
-    
-    # === Negotiation Control (NEW) ===
-    offer_stage: int                 # 0 = not started , 1 = immediate settlement warning , 2 = 3-month plan shown , 3 = 6-month plan shown (FINAL)
-    refusal_count: int               # Number of times customer refused
-    last_offer_made: Optional[str]   # Name of last plan offered
-    session_locked: bool             # HARD STOP after WhatsApp confirmation
-    has_escalated: bool
-
-    
+        
     # === Call Outcome ===
     call_outcome: Optional[str]
     call_summary: Optional[str]
@@ -109,11 +101,7 @@ class CallState(TypedDict):
     escalation_reason: Optional[str]         # Why customer refused all options
     awaiting_escalation_reason: Optional[bool]
     escalation_reason_collected: Optional[bool]
-    
-    # === Partial Payment ===
-    partial_payment_amount: Optional[float]  # Partial amount customer can pay
-    partial_payment_remaining: Optional[float] # Remaining after partial
-    
+      
     # === WhatsApp Confirmation ===
     awaiting_whatsapp_confirmation: Optional[bool]
     
@@ -121,6 +109,15 @@ class CallState(TypedDict):
     partial_payment_amount: Optional[float]  # Partial amount customer can pay
     partial_payment_remaining: Optional[float] # Remaining after partial
     awaiting_partial_amount_clarification: Optional[bool]  # NEW - waiting for user to specify amount
+    
+    # === Negotiation Control (NEW) ===
+    offer_stage: int                 # 0 = not started , 1 = immediate settlement warning , 2 = 3-month plan shown , 3 = 6-month plan shown (FINAL)
+    refusal_count: int               # Number of times customer refused
+    last_offer_made: Optional[str]   # Name of last plan offered
+    session_locked: bool             # HARD STOP after WhatsApp confirmation
+    has_escalated: bool
+    immediate_settlement_stage: int  #  0 (not offered), 1 (first push), 2 (second push with consequences)
+    installment_stage: int           #  0 (not offered), 1 (3-month shown), 2 (6-month shown)
 
 
 # =========================
@@ -185,14 +182,7 @@ def create_initial_state(phone: str) -> Optional[CallState]:
         # Negotiation
         offered_plans=[],
         selected_plan=None,
-        
-        # Negotiation Control
-        offer_stage=0,
-        refusal_count=0,
-        last_offer_made=None,
-        session_locked=False,
-        has_escalated=False,
-        
+                
         # Outcome
         call_outcome=None,
         call_summary=None,
@@ -221,6 +211,15 @@ def create_initial_state(phone: str) -> Optional[CallState]:
         partial_payment_amount=None,
         partial_payment_remaining=None,
         awaiting_partial_amount_clarification=False,  
+        
+        # Negotiation Control
+        offer_stage=0,
+        refusal_count=0,
+        last_offer_made=None,
+        session_locked=False,
+        has_escalated=False,
+        immediate_settlement_stage=0,  # NEW: Initialize to 0 (not offered yet)
+        installment_stage=0,            # NEW: Initialize to 0 (not offered yet)
     )
 
     validate_state(state)

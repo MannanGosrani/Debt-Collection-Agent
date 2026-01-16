@@ -1,4 +1,4 @@
-# src/session_manager.py
+# src/whatsapp/session_manager.py
 
 from typing import Dict, Optional
 from datetime import datetime

@@ -6,6 +6,78 @@ from ..data import save_ptp
 from datetime import datetime, timedelta
 import re
 
+def classify_user_intent(last_user_input: str, messages: list, state: CallState) -> dict:
+    """
+    Classify what the user is trying to communicate.
+    Returns: {
+        "intent": str,  # One of: partial_payment, cant_pay_full, rejection, acceptance, providing_amount, providing_date, stalling
+        "confidence": float,
+        "reasoning": str
+    }
+    """
+    from ..utils.llm import get_azure_client
+    
+    # Format recent conversation for context
+    recent_messages = messages[-6:] if len(messages) > 6 else messages
+    conversation_context = "\n".join([
+        f"{'Agent' if msg['role'] == 'assistant' else 'Customer'}: {msg['content']}"
+        for msg in recent_messages
+    ])
+    
+    prompt = f"""You are analyzing a debt collection conversation to understand the customer's intent.
+
+Conversation context:
+{conversation_context}
+
+Customer's latest message: "{last_user_input}"
+
+Outstanding amount: Rs.{state.get('outstanding_amount', 0):,.0f}
+Partial payment offered: {"Rs." + str(state.get('partial_payment_amount', 0)) if state.get('partial_payment_amount') else "None"}
+
+Classify the customer's intent as ONE of these:
+1. partial_payment - Customer wants to pay SOME amount today and rest later
+2. cant_pay_full - Customer explicitly states they CANNOT pay the full amount today
+3. rejection - Customer is rejecting the current offer/plan
+4. acceptance - Customer is accepting/agreeing to current offer
+5. providing_amount - Customer is stating a specific payment amount
+6. providing_date - Customer is giving a payment date/timeframe
+7. stalling - Customer is being vague or avoiding commitment
+8. query - Customer is asking a question
+
+Return ONLY a JSON object in this exact format:
+{{"intent": "one_of_above", "confidence": 0.0-1.0, "reasoning": "brief explanation"}}"""
+
+    try:
+        client = get_azure_client()
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=150
+        )
+        
+        result_text = response.choices[0].message.content.strip()
+        
+        # Parse JSON response
+        import json
+        result = json.loads(result_text)
+        
+        print(f"[INTENT] Classified as '{result['intent']}' with confidence {result['confidence']}")
+        return result
+        
+    except Exception as e:
+        print(f"[INTENT] Classification failed: {e}")
+        # Fallback to basic keyword matching
+        text_lower = last_user_input.lower()
+        if any(word in text_lower for word in ["some", "part", "partial"]) and "today" in text_lower:
+            return {"intent": "partial_payment", "confidence": 0.7, "reasoning": "fallback"}
+        elif "can't pay" in text_lower or "cannot pay" in text_lower:
+            return {"intent": "cant_pay_full", "confidence": 0.7, "reasoning": "fallback"}
+        elif any(word in text_lower for word in ["no", "not interested", "none"]):
+            return {"intent": "rejection", "confidence": 0.6, "reasoning": "fallback"}
+        else:
+            return {"intent": "stalling", "confidence": 0.5, "reasoning": "fallback"}
+
 def detect_partial_payment_scenario(state: CallState, last_user_input: str) -> dict:
     """
     Detect if customer is offering to pay partial amount today + rest in installments.
@@ -787,7 +859,227 @@ def negotiation_node(state: CallState) -> dict:
                 "stage": "negotiation"
             }
 
-    # 5. Generate AI Response
+    # 5. INTENT CLASSIFICATION - Understand what user is saying
+    user_intent = classify_user_intent(last_user_input, messages, state)
+    intent = user_intent.get("intent")
+    
+    print(f"[NEGOTIATION FLOW] Intent: {intent}, Stage: {state.get('stage')}")
+    
+    # Get negotiation stage tracking (add to state if not present)
+    immediate_settlement_stage = state.get("immediate_settlement_stage", 0)  # 0, 1, 2
+    installment_stage = state.get("installment_stage", 0)  # 0, 1 (3-month), 2 (6-month)
+    
+    # 6. ROUTE BASED ON INTENT
+    
+    # SCENARIO 1: User wants to pay PARTIAL amount today
+    if intent == "partial_payment" and not state.get("partial_payment_amount"):
+        # Ask for specific amount
+        response = f"How much can you pay today, {customer_name}? Please provide a specific amount."
+        return {
+            "messages": state["messages"] + [{"role": "assistant", "content": response}],
+            "awaiting_user": True,
+            "stage": "negotiation"
+        }
+    
+    # SCENARIO 2: User CAN'T pay full amount today
+    if intent == "cant_pay_full":
+        # Progressive pushing: immediate settlement → 3-month → 6-month → escalate
+        
+        if immediate_settlement_stage == 0:
+            # First push: Offer immediate settlement with 5% discount
+            discounted = amount * 0.95
+            response = (
+                f"I understand, {customer_name}. Your debt is overdue and charges are increasing daily, "
+                f"raising your total payable. Immediate settlement of Rs.{discounted:,.0f} within 7 days "
+                f"with 5% discount is your lowest-risk option.\n\n"
+                f"This stops all further charges. Can you commit to this payment?"
+            )
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": response}],
+                "immediate_settlement_stage": 1,
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+            
+        elif immediate_settlement_stage == 1:
+            # Second push: Emphasize consequences
+            discounted = amount * 0.95
+            response = (
+                f"Refusing immediate payment increases your total due as charges continue to accrue. "
+                f"Late charges of Rs.{amount * 0.02:,.0f}/day are being added.\n\n"
+                f"Immediate settlement of Rs.{discounted:,.0f} within 7 days is your lowest-risk option. "
+                f"Will you commit to this now?"
+            )
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": response}],
+                "immediate_settlement_stage": 2,
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+            
+        elif installment_stage == 0:
+            # Show 3-month plan
+            monthly_3 = amount / 3
+            response = (
+                f"I understand immediate payment is difficult. Let me offer an installment option:\n\n"
+                f"**3-Month Installment Plan:**\n"
+                f"Pay Rs.{monthly_3:,.0f} per month for 3 months\n\n"
+                f"This will help you manage the payment. Can you commit to this plan?"
+            )
+            
+            plans = [{
+                "name": "3-Month Installment",
+                "description": f"Pay Rs.{monthly_3:,.0f} per month for 3 months"
+            }]
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": response}],
+                "offered_plans": plans,
+                "installment_stage": 1,
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+            
+        elif installment_stage == 1:
+            # Show 6-month plan
+            monthly_6 = amount / 6
+            response = (
+                f"Let me offer a more flexible option:\n\n"
+                f"**6-Month Installment Plan:**\n"
+                f"Pay Rs.{monthly_6:,.0f} per month for 6 months\n\n"
+                f"This gives you more time. Can you commit to this plan?"
+            )
+            
+            plans = [{
+                "name": "6-Month Installment",
+                "description": f"Pay Rs.{monthly_6:,.0f} per month for 6 months"
+            }]
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": response}],
+                "offered_plans": plans,
+                "installment_stage": 2,
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+            
+        else:
+            # Escalate
+            response = (
+                f"I understand you're unable to commit to any payment plan at this time. "
+                f"Since no plan was chosen, we will have to escalate this matter. "
+                f"Our senior team will contact you within 24 hours to discuss further steps.\n\n"
+                f"Reference ID: {state.get('customer_id')}"
+            )
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": response}],
+                "has_escalated": True,
+                "is_complete": True,
+                "call_outcome": "escalated",
+                "escalation_reason": "No payment plan accepted",
+                "stage": "negotiation",
+                "awaiting_user": False
+            }
+    
+    # SCENARIO 3: User is rejecting current offer
+    if intent == "rejection":
+        # Progress to next stage based on current position
+        if immediate_settlement_stage < 2:
+            # Still pushing immediate settlement
+            immediate_settlement_stage += 1
+            discounted = amount * 0.95
+            response = (
+                f"I understand your concern. However, delay increases your total payable significantly. "
+                f"Immediate settlement of Rs.{discounted:,.0f} within 7 days with 5% discount "
+                f"avoids further charges. Will you commit to this now?"
+            )
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": response}],
+                "immediate_settlement_stage": immediate_settlement_stage,
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+        elif installment_stage == 0:
+            # Move to 3-month plan
+            monthly_3 = amount / 3
+            response = (
+                f"Let me offer an installment option to make this easier:\n\n"
+                f"**3-Month Installment Plan:**\n"
+                f"Pay Rs.{monthly_3:,.0f} per month for 3 months\n\n"
+                f"Can you commit to this?"
+            )
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": response}],
+                "installment_stage": 1,
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+        elif installment_stage == 1:
+            # Move to 6-month plan
+            monthly_6 = amount / 6
+            response = (
+                f"**6-Month Installment Plan:**\n"
+                f"Pay Rs.{monthly_6:,.0f} per month for 6 months\n\n"
+                f"This is our most flexible option. Can you commit?"
+            )
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": response}],
+                "installment_stage": 2,
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+        else:
+            # Escalate
+            response = (
+                f"Since no plan was chosen, we will have to escalate this matter. "
+                f"Someone will contact you within 24 hours to discuss further steps."
+            )
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": response}],
+                "has_escalated": True,
+                "is_complete": True,
+                "call_outcome": "escalated",
+                "stage": "negotiation",
+                "awaiting_user": False
+            }
+    
+    # SCENARIO 4: User accepts
+    if intent == "acceptance":
+        # Check if we have amount and date
+        has_complete, committed_amount, committed_date, selected_plan = has_commitment_details(state, last_user_input)
+        
+        if not committed_date:
+            return {
+                "messages": state["messages"] + [{
+                    "role": "assistant",
+                    "content": "When would you like to make this payment?"
+                }],
+                "pending_ptp_amount": committed_amount or amount,
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+        
+        # Have both amount and date - save PTP
+        return {
+            "messages": state["messages"] + [{
+                "role": "assistant",
+                "content": "Thank you. Before I proceed, may I know the reason for the delay in payment?"
+            }],
+            "pending_ptp_amount": committed_amount or amount,
+            "pending_ptp_date": committed_date,
+            "awaiting_reason_for_delay": True,
+            "awaiting_user": True,
+            "stage": "negotiation"
+        }
+    
+    # FALLBACK: Use LLM for other cases
     ai_result = generate_negotiation_response(
         situation="negotiation",
         customer_name=customer_name,
@@ -797,98 +1089,11 @@ def negotiation_node(state: CallState) -> dict:
         offered_plans=state.get("offered_plans")
     )
     
-    # Bridge: Create state updates dict instead of mutating state directly
-    state_updates = {}
-    if ai_result.get("data"):
-        data = ai_result["data"]
-        if "amount" in data:
-            state_updates["pending_ptp_amount"] = data["amount"]
-        if "date" in data:
-            state_updates["pending_ptp_date"] = data["date"]
-
-    action = ai_result.get("action")
     message = ai_result.get("response")
     
-    # DEBUG: See what the LLM is deciding
-    print(f"[NEGOTIATION DEBUG] LLM Action: '{action}' for input: '{last_user_input[:50] if last_user_input else 'None'}'")
+    return {
+        "messages": state["messages"] + [{"role": "assistant", "content": message}],
+        "awaiting_user": True,
+        "stage": "negotiation"
+    }
     
-    # 6. MANDATORY ACTION SWITCH
-    if action == "ask_date":
-        return {
-            **state_updates,
-            "messages": state["messages"] + [{"role": "assistant", "content": message}],
-            "awaiting_user": True,
-            "stage": "negotiation"
-        }
-        
-    elif action == "ask_plan":
-        plans = state.get("offered_plans")
-        if not plans:
-            plans = generate_payment_plans(amount, customer_name)
-            
-        return {
-            **state_updates,
-            "messages": state["messages"] + [{"role": "assistant", "content": message}],
-            "offered_plans": plans,
-            "awaiting_user": True,
-            "stage": "negotiation"
-        }
-        
-    elif action == "save_ptp":
-        current_amount = state_updates.get("pending_ptp_amount") or state.get("pending_ptp_amount")
-        current_date = state_updates.get("pending_ptp_date") or state.get("pending_ptp_date")
-
-        if not current_amount:
-            current_amount = state.get("outstanding_amount")
-        
-        # CRITICAL FIX: Extract "today" from user input if present
-        if not current_date and last_user_input:
-            user_lower = last_user_input.lower()
-            if "today" in user_lower:
-                current_date = datetime.now().strftime("%d-%m-%Y")
-                print(f"[NEGOTIATION] Detected 'today' in user input, setting date to: {current_date}")
-            else:
-                # User didn't provide a date - ask for it instead of assuming
-                print(f"[NEGOTIATION] No date detected, need to ask for date")
-                return {
-                    "messages": state["messages"] + [{
-                        "role": "assistant",
-                        "content": "When would you like to make this payment?"
-                    }],
-                    "pending_ptp_amount": current_amount,
-                    "awaiting_user": True,
-                    "stage": "negotiation"
-                }
-
-        return {
-            "messages": state["messages"] + [{
-                "role": "assistant",
-                "content": "Thank you. Before I proceed, may I know the reason for the delay in payment?"
-            }],
-            "pending_ptp_amount": current_amount,
-            "pending_ptp_date": current_date,
-            "awaiting_reason_for_delay": True,
-            "awaiting_user": True,
-            "stage": "negotiation",
-            "last_user_input": None
-        }
-
-        
-    elif action == "escalate":
-        return {
-            **state_updates,
-            "messages": state["messages"] + [{"role": "assistant", "content": message}],
-            "has_escalated": True,
-            "is_complete": True,
-            "call_outcome": "escalated",
-            "stage": "negotiation",
-            "awaiting_user": False
-        }
-        
-    else:
-        return {
-            **state_updates,
-            "messages": state["messages"] + [{"role": "assistant", "content": message}],
-            "awaiting_user": True,
-            "stage": "negotiation"
-        }
