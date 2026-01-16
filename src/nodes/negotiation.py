@@ -659,8 +659,10 @@ def negotiation_node(state: CallState) -> dict:
             "delay_reason": reason,
             "awaiting_whatsapp_confirmation": False,
             "awaiting_reason_for_delay": False,
-            "stage": "negotiation",
-            "awaiting_user": True
+            "stage": "closing",            
+            "is_complete": True,           
+            "call_outcome": "ptp_recorded", 
+            "awaiting_user": False         
         }
 
     # 4. Generate AI Response

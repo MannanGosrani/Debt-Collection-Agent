@@ -51,17 +51,19 @@ def paid_verification_node(state: CallState) -> dict:
 
     # 4. Execute decision (NO inference here)
     if result == "HAS_PROOF":
-        response = generate_ai_response(
-            situation="verify_payment_details",
-            customer_name=customer_name,
-            customer_message=user_input,
-            conversation_history=messages,
+        response = (
+            f"Thank you, {customer_name}. "
+            f"I'll verify this payment from our side and get back to you shortly. "
+            f"You should receive confirmation within 24-48 hours."
         )
+        
         return {
             "messages": messages + [{"role": "assistant", "content": response}],
             "payment_status": "paid",
+            "is_complete": True,
+            "call_outcome": "paid",
             "awaiting_user": False,
-            "stage": "paid_verification",
+            "stage": "closing",
         }
 
     if result in ["NO_PROOF", "UNAUTHORIZED"]:

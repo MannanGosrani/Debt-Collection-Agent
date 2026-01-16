@@ -1,3 +1,5 @@
+# src/utils/llm.py
+
 """
 LLM utilities with Azure OpenAI-based intent classification and intelligent response generation.
 
@@ -46,7 +48,7 @@ def get_azure_client():
             api_key=api_key,
             api_version=api_version
         )
-        print(f"[AZURE] âœ… Successfully initialized Azure OpenAI client")
+        print(f"[AZURE] ✅ Successfully initialized Azure OpenAI client")
         return _client_cache
     except Exception as e:
         raise RuntimeError(f"Failed to initialize Azure OpenAI client: {e}")
@@ -564,7 +566,28 @@ def generate_ai_response(
 4. SPECIFIC - use actual numbers, dates, amounts when provided
 5. ACTION-ORIENTED - guide customer toward resolution TODAY
 
-Key phrases to use when appropriate:
+SITUATION-SPECIFIC RESPONSES:
+
+For "verify_payment_details" or "ask_payment_proof":
+- Customer has claimed they already paid OR provided transaction ID/proof
+- YOUR RESPONSE MUST:
+  * Acknowledge receipt of the information
+  * State you will verify it with the records
+  * Mention timeline (24-48 hours)
+  * Be brief (2-3 sentences max)
+  * DO NOT mention late charges or legal action
+  * Example: "Thank you, [name]. I'll verify this payment from our side and get back to you shortly. You should receive confirmation within 24 hours."
+
+For "ask_transaction_proof":
+- Customer claims payment made but hasn't provided proof yet
+- Ask firmly for transaction ID, date, and amount
+- Emphasize urgency and consequences of delay
+
+For all other situations:
+- Use pressure tactics appropriately
+- Mention consequences
+
+Key phrases to use when appropriate (NOT for payment verification):
 - "Your credit score is being impacted right now"
 - "Late charges of Rs.X/day are accumulating"
 - "Legal action may be initiated within 7 days"
@@ -630,29 +653,47 @@ def decide_payment_verification(user_message: str) -> dict:
     - NEVER mutates state
     - NEVER infers missing facts
     """
+    
+    # RULE-BASED FALLBACK: Check for obvious proof indicators
+    user_lower = user_message.lower()
+    proof_keywords = [
+        "transaction", "utr", "receipt", "reference", 
+        "payment id", "txn", "transaction id", "ref number",
+        "reference number", "paid on", "transaction number"
+    ]
+    
+    # If ANY proof keyword is present, classify as HAS_PROOF
+    if any(keyword in user_lower for keyword in proof_keywords):
+        print(f"[VERIFICATION] Rule-based: HAS_PROOF detected - '{user_message[:50]}'")
+        return {"verification_result": "HAS_PROOF"}
 
+    # Otherwise, fall through to LLM classification
     try:
         client = get_azure_client()
     except Exception:
         return {"verification_result": "UNCLEAR"}
 
-    system_prompt = """
-You are a debt collection verification decision engine.
-
+    system_prompt = """You are a debt collection verification decision engine.
 The customer has already been asked to provide payment proof.
-
 Classify their response strictly.
-
 RESULT TYPES:
-- HAS_PROOF → Mentions transaction ID, UTR, receipt, reference number
-- NO_PROOF → Clearly says they don't have proof
+- HAS_PROOF → Customer mentions ANY of: transaction ID, transaction number, UTR, receipt number, reference number, payment ID, transaction reference, OR provides date + amount
+- NO_PROOF → Clearly says they don't have proof OR refuses to provide
 - UNAUTHORIZED → Paid a person/agent instead of official channel
-- UNCLEAR → Anything else
-
-RULES:
-- Do NOT assume proof exists
-- Do NOT be lenient
-- If ambiguous → UNCLEAR
+- UNCLEAR → None of the above
+EXAMPLES OF HAS_PROOF:
+- "transaction id #7654"
+- "my transaction id is ABC123"
+- "I paid on 15th Jan, 250000"
+- "UTR number 123456789"
+- "receipt number XYZ"
+- "reference number 7654"
+- "transaction Id #7654, 15th jan, 250,000"
+EXAMPLES OF NO_PROOF:
+- "I don't have the receipt"
+- "I lost the transaction details"
+- "I can't find it"
+Be LENIENT for HAS_PROOF - if customer provides ANY payment identifier or date+amount, classify as HAS_PROOF.
 
 Return ONLY valid JSON.
 

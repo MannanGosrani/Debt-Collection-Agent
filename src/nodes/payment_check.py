@@ -42,10 +42,20 @@ def payment_check_node(state: CallState) -> dict:
     # 1️⃣ Happy PTP – agrees to pay now
     # --------------------------------------------------
     if intent == "AGREE_TO_PAY":
+        from datetime import datetime
+        
+        # Extract date from LLM or default to today
+        ptp_date = decision.get("date")
+        if not ptp_date:
+            # Check if user said "today" or similar
+            user_lower = user_input.lower()
+            if any(word in user_lower for word in ["today", "now", "immediately"]):
+                ptp_date = datetime.now().strftime("%d-%m-%Y")
+        
         return {
             "payment_status": "willing",
             "pending_ptp_amount": state["outstanding_amount"],
-            "pending_ptp_date": decision.get("date"),  # decided by LLM
+            "pending_ptp_date": ptp_date,
             "awaiting_reason_for_delay": True,
             "awaiting_user": True,
             "stage": "payment_check",
@@ -57,8 +67,7 @@ def payment_check_node(state: CallState) -> dict:
     if intent == "ALREADY_PAID":
         return {
             "payment_status": "paid",
-            "verification_asked": True,
-            "awaiting_user": True,
+            "awaiting_user": False,  # Let paid_verification_node handle the flow
             "stage": "paid_verification",
         }
 
@@ -90,7 +99,7 @@ def payment_check_node(state: CallState) -> dict:
     if intent == "DISPUTE":
         return {
             "payment_status": "disputed",
-            "has_escalated": True,
+            "dispute_reason": user_input,
             "stage": "closing",
             "awaiting_user": False,
         }
