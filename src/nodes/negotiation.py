@@ -862,8 +862,12 @@ def negotiation_node(state: CallState) -> dict:
                 "delay_reason": reason,
                 "awaiting_whatsapp_confirmation": False,
                 "awaiting_reason_for_delay": False,
-                "stage": "negotiation",
-                "awaiting_user": True
+                "stage": "closing",
+                "awaiting_user": True,
+                "is_complete": True,              # Close the session
+                "call_outcome": "ptp_confirmed",  # Mark as successful
+                "stage": "closing",               # Move to closing stage
+                "awaiting_user": False            # Don't wait for more input
             }
             
         else:
