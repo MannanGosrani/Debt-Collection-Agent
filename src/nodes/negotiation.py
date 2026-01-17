@@ -711,10 +711,31 @@ def negotiation_node(state: CallState) -> dict:
 
     # 3. PARTIAL PAYMENT DETECTION (NEW - handles "100k today + rest in plans")
     partial_info = detect_partial_payment_scenario(state, last_user_input)
-    
+
     if partial_info["is_partial"]:
         amount_today = partial_info["amount_today"]
         remaining = partial_info["remaining"]
+        
+        # CRITICAL FIX: Check if we already have all the partial payment info
+        already_have_info = (
+            state.get("partial_payment_amount") and 
+            state.get("partial_payment_remaining") and
+            state.get("pending_ptp_date")  # They already told us the future date
+        )
+        
+        if already_have_info:
+            # We already asked, user is just repeating - move to acceptance flow
+            print(f"[PARTIAL PAYMENT] User repeating commitment, moving to ask for reason")
+            
+            return {
+                "messages": state["messages"] + [{
+                    "role": "assistant",
+                    "content": "Thank you. Before I proceed, may I know the reason for the delay in payment?"
+                }],
+                "awaiting_reason_for_delay": True,
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
         
         print(f"[PARTIAL PAYMENT] Customer offers Rs.{amount_today:,.0f} today, Rs.{remaining:,.0f} remaining")
         
@@ -731,7 +752,8 @@ def negotiation_node(state: CallState) -> dict:
             "partial_payment_remaining": remaining,
             "payment_status": "willing",
             "awaiting_user": True,
-            "stage": "negotiation"
+            "stage": "negotiation",
+            "awaiting_partial_timing": True  # NEW FLAG
         }
     
     # 3.5 VAGUE PARTIAL PAYMENT ("some amount today")
@@ -784,42 +806,108 @@ def negotiation_node(state: CallState) -> dict:
             
         # Record the reason and finalize PTP
         reason = last_user_input
-        ptp_amount = state.get("pending_ptp_amount")
-        ptp_date = state.get("pending_ptp_date")
-        selected_plan = state.get("selected_plan") or {}
-        plan_name = selected_plan.get("name", "Payment Plan")
-        
-        ptp_id = save_ptp(
-            customer_id=state["customer_id"],
-            amount=ptp_amount,
-            date=ptp_date,
-            plan_type=plan_name
-        )
-        
-        payment_link = f"https://abc-finance.com/pay/PTP{ptp_id}"
-        
-        confirmation_message = (
-            f"Thank you, {customer_name}. ✅\n\n"
-            f"I've recorded your commitment:\n"
-            f"- Plan: {plan_name}\n"
-            f"- Amount: Rs.{ptp_amount:,.0f}\n"
-            f"- Date: {ptp_date}\n"
-            f"- Reason: {reason}\n\n"
-            f"**Payment Link:** {payment_link}"
-        )
 
-        
-        return {
-            "messages": state["messages"] + [{"role": "assistant", "content": confirmation_message}],
-            "ptp_amount": ptp_amount,
-            "ptp_date": ptp_date,
-            "ptp_id": ptp_id,
-            "delay_reason": reason,
-            "awaiting_whatsapp_confirmation": False,
-            "awaiting_reason_for_delay": False,
-            "stage": "negotiation",
-            "awaiting_user": True
-        }
+        # CRITICAL FIX: Check if this is a partial payment scenario requiring TWO PTPs
+        if state.get("partial_payment_amount") and state.get("partial_payment_remaining"):
+            # Partial payment scenario - create TWO separate PTPs
+            
+            # First PTP: Immediate partial payment today
+            ptp_amount_1 = state.get("partial_payment_amount")
+            ptp_date_1 = datetime.now().strftime("%d-%m-%Y")  # Today's date
+            plan_name_1 = "Immediate Settlement"
+            
+            ptp_id_1 = save_ptp(
+                customer_id=state["customer_id"],
+                amount=ptp_amount_1,
+                date=ptp_date_1,
+                plan_type=plan_name_1
+            )
+            
+            # Second PTP: Remaining amount on future date
+            ptp_amount_2 = state.get("partial_payment_remaining")
+            ptp_date_2 = state.get("pending_ptp_date")
+            plan_name_2 = "Eventual Settlement"
+            
+            ptp_id_2 = save_ptp(
+                customer_id=state["customer_id"],
+                amount=ptp_amount_2,
+                date=ptp_date_2,
+                plan_type=plan_name_2
+            )
+            
+            payment_link_1 = f"https://abc-finance.com/pay/PTP{ptp_id_1}"
+            payment_link_2 = f"https://abc-finance.com/pay/PTP{ptp_id_2}"
+            
+            confirmation_message = (
+                f"Thank you, {customer_name}. ✅\n\n"
+                f"I've recorded your commitment:\n"
+                f"- Plan: {plan_name_1}\n"
+                f"- Amount: Rs.{ptp_amount_1:,.0f}\n"
+                f"- Date: {ptp_date_1}\n"
+                f"- Reason: {reason}\n\n"
+                f"**Payment Link:** {payment_link_1}\n\n"
+                f"I've recorded your commitment:\n"
+                f"- Plan: {plan_name_2}\n"
+                f"- Amount: Rs.{ptp_amount_2:,.0f}\n"
+                f"- Date: {ptp_date_2}\n"
+                f"- Reason: {reason}\n\n"
+                f"**Payment Link:** {payment_link_2}"
+            )
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": confirmation_message}],
+                "ptp_amount": ptp_amount_2,  # Store eventual settlement as primary
+                "ptp_date": ptp_date_2,
+                "ptp_id": ptp_id_2,
+                "delay_reason": reason,
+                "awaiting_whatsapp_confirmation": False,
+                "awaiting_reason_for_delay": False,
+                "stage": "negotiation",
+                "awaiting_user": True
+            }
+            
+        else:
+            # Normal scenario - single PTP
+            # Determine plan name
+            if state.get("selected_plan"):
+                selected_plan = state.get("selected_plan")
+                plan_name = selected_plan.get("name", "Payment Plan")
+            else:
+                plan_name = "Payment Plan"
+            
+            ptp_amount = state.get("pending_ptp_amount")
+            ptp_date = state.get("pending_ptp_date")
+            
+            ptp_id = save_ptp(
+                customer_id=state["customer_id"],
+                amount=ptp_amount,
+                date=ptp_date,
+                plan_type=plan_name
+            )
+            
+            payment_link = f"https://abc-finance.com/pay/PTP{ptp_id}"
+            
+            confirmation_message = (
+                f"Thank you, {customer_name}. ✅\n\n"
+                f"I've recorded your commitment:\n"
+                f"- Plan: {plan_name}\n"
+                f"- Amount: Rs.{ptp_amount:,.0f}\n"
+                f"- Date: {ptp_date}\n"
+                f"- Reason: {reason}\n\n"
+                f"**Payment Link:** {payment_link}"
+            )
+            
+            return {
+                "messages": state["messages"] + [{"role": "assistant", "content": confirmation_message}],
+                "ptp_amount": ptp_amount,
+                "ptp_date": ptp_date,
+                "ptp_id": ptp_id,
+                "delay_reason": reason,
+                "awaiting_whatsapp_confirmation": False,
+                "awaiting_reason_for_delay": False,
+                "stage": "negotiation",
+                "awaiting_user": True
+            }
     
     # 4.5 COLLECTING PARTIAL AMOUNT (user responded with amount)
     if state.get("awaiting_partial_amount_clarification"):
@@ -1067,18 +1155,24 @@ def negotiation_node(state: CallState) -> dict:
             }
         
         # Have both amount and date - save PTP
+        # CRITICAL FIX: Use remaining amount for partial payment scenarios
+        if state.get("partial_payment_remaining"):
+            pending_amount = state.get("partial_payment_remaining")
+        else:
+            pending_amount = committed_amount or amount
+
         return {
             "messages": state["messages"] + [{
                 "role": "assistant",
                 "content": "Thank you. Before I proceed, may I know the reason for the delay in payment?"
             }],
-            "pending_ptp_amount": committed_amount or amount,
+            "pending_ptp_amount": pending_amount,
             "pending_ptp_date": committed_date,
             "awaiting_reason_for_delay": True,
             "awaiting_user": True,
             "stage": "negotiation"
         }
-    
+            
     # FALLBACK: Use LLM for other cases
     ai_result = generate_negotiation_response(
         situation="negotiation",
