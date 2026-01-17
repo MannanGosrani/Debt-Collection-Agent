@@ -6,6 +6,47 @@ from ..data import save_ptp
 from datetime import datetime, timedelta
 import re
 
+def extract_plan_from_message(message: str, offered_plans: list = None) -> dict:
+    """
+    Extract plan details from user message.
+    Works even if offered_plans is empty (fallback to duration matching).
+    
+    Returns: dict with plan info or None
+    """
+    message_lower = message.lower()
+    
+    # First try to find in offered_plans if available
+    if offered_plans:
+        for plan in offered_plans:
+            plan_name_lower = plan.get("name", "").lower()
+            plan_desc_lower = plan.get("description", "").lower()
+            
+            # Check for month count match
+            if "3" in message_lower and "month" in message_lower:
+                if "3-month" in plan_name_lower or "3 month" in plan_name_lower:
+                    return plan
+            elif "6" in message_lower and "month" in message_lower:
+                if "6-month" in plan_name_lower or "6 month" in plan_name_lower:
+                    return plan
+                    
+    # Fallback: Create plan structure based on duration mentioned
+    if "3" in message_lower and "month" in message_lower:
+        # User wants 3-month plan
+        return {
+            "name": "3-Month Installment",
+            "description": "Pay in 3 monthly installments",
+            "duration": 3
+        }
+    elif "6" in message_lower and "month" in message_lower:
+        # User wants 6-month plan
+        return {
+            "name": "6-Month Installment",
+            "description": "Pay in 6 monthly installments",
+            "duration": 6
+        }
+        
+    return None
+
 def classify_user_intent(last_user_input: str, messages: list, state: CallState) -> dict:
     """
     Classify what the user is trying to communicate.
@@ -443,11 +484,22 @@ def detect_plan_change(text: str, current_plan: dict, available_plans: list) -> 
             if month_match:
                 months = month_match.group(1)
                 if months in text_lower and "month" in text_lower:
-                    print(f"[PLAN CHANGE] Detected change from {current_plan['name']} to {plan['name']}")
+                    old_name = current_plan["name"] if current_plan else "previous selection"
+                    print(f"[PLAN CHANGE] Detected change from {old_name} to {plan['name']}")
                     return plan
     
     return None
 
+def is_plan_switch_message(text: str) -> bool:
+    """
+    Detect if user is explicitly switching plans mid-commitment.
+    """
+    switch_phrases = [
+        "actually", "instead", "rather", "change", "switch",
+        "go with", "prefer", "i will go with"
+    ]
+    text_lower = text.lower()
+    return any(p in text_lower for p in switch_phrases)
 
 def detect_plan_by_feature(text: str, offered_plans: list) -> dict:
     """
@@ -656,6 +708,12 @@ def negotiation_node(state: CallState) -> dict:
     Replaces hardcoded heuristics with LLM-driven flow control.
     """
     
+    # Debug logging
+    offered_plans = state.get("offered_plans", [])
+    print(f"[NEGOTIATION] Entry - Offered plans: {[p.get('name') for p in offered_plans]}")
+    print(f"[NEGOTIATION] awaiting_reason_for_delay: {state.get('awaiting_reason_for_delay')}")
+    print(f"[NEGOTIATION] pending_ptp_date: {state.get('pending_ptp_date')}")
+    
     # 1. Escalation check
     if state.get("has_escalated"):
         return {"awaiting_user": False, "is_complete": False}
@@ -686,6 +744,7 @@ def negotiation_node(state: CallState) -> dict:
                 # Conversation control
                 "awaiting_whatsapp_confirmation": False,
                 "awaiting_user": False,
+                "offered_plans": state.get("offered_plans", []),
 
                 # Close session cleanly
                 "is_complete": True,
@@ -699,6 +758,7 @@ def negotiation_node(state: CallState) -> dict:
                     "role": "assistant",
                     "content": "Please reply with 'Yes' to confirm receipt of the payment link."
                 }],
+                "offered_plans": state.get("offered_plans", []),
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
@@ -723,6 +783,7 @@ def negotiation_node(state: CallState) -> dict:
             "messages": state["messages"] + [{"role": "assistant", "content": response}],
             "partial_payment_amount": amount_today,
             "partial_payment_remaining": remaining,
+            "offered_plans": state.get("offered_plans", []),
             "payment_status": "willing",
             "awaiting_user": True,
             "stage": "negotiation"
@@ -747,12 +808,89 @@ def negotiation_node(state: CallState) -> dict:
                 "messages": state["messages"] + [{"role": "assistant", "content": response}],
                 "payment_status": "willing",
                 "awaiting_partial_amount_clarification": True,
+                "offered_plans": state.get("offered_plans", []),
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
 
     # 4. Reason Collection Logic (CRITICAL: Must remain)
     if state.get("awaiting_reason_for_delay"):
+        # CRITICAL: Check if user is trying to change the plan instead of providing reason
+        plan_change_indicators = [
+            "actually", "instead", "rather", "change", "switch",
+            "i want", "i will go", "i'll go", "i prefer",
+            "month plan", "installment plan", "settlement"
+        ]
+        
+        is_plan_change = any(indicator in last_user_input.lower() for indicator in plan_change_indicators)
+        
+        if is_plan_change:
+            print(f"[PLAN CHANGE] User attempting to change plan: '{last_user_input}'")
+            
+            # Use robust plan extraction
+            offered_plans = state.get("offered_plans", [])
+            new_plan = extract_plan_from_message(last_user_input, offered_plans)
+            
+            if new_plan:
+                # Calculate monthly amount based on duration
+                outstanding = state.get("outstanding_amount", 0)
+                duration = new_plan.get("duration")
+                
+                monthly_amount = None
+                if duration:
+                    monthly_amount = outstanding / duration
+                    new_plan["description"] = f"Pay Rs.{monthly_amount:,.0f} per month for {duration} months"
+                else:
+                    # Extract from description if available
+                    import re
+                    amount_match = re.search(r'Rs\.(\d+(?:,\d+)*)', new_plan.get("description", ""))
+                    monthly_amount = float(amount_match.group(1).replace(',', '')) if amount_match else None
+                    
+                print(f"[PLAN CHANGE] ✅ Switching to: {new_plan.get('name')}")
+                
+                # Check if date is already available
+                pending_date = state.get("pending_ptp_date")
+                
+                if pending_date:
+                    # Date already provided - just ask for reason
+                    response = (
+                        f"Understood, I've updated your selection to the {new_plan.get('name')} "
+                        f"({new_plan.get('description')}).\n\n"
+                        f"Before I proceed, may I know the reason for the delay in payment?"
+                    )
+                else:
+                    # No date yet - ask for date
+                    response = (
+                        f"Understood, I've updated your selection to the {new_plan.get('name')} "
+                        f"({new_plan.get('description')}).\n\n"
+                        f"When would you like to make this payment?"
+                    )
+                
+                return {
+                    "messages": state["messages"] + [{
+                        "role": "assistant",
+                        "content": response
+                    }],
+                    "selected_plan": new_plan,
+                    "pending_ptp_amount": monthly_amount if monthly_amount else state.get("pending_ptp_amount"),
+                    "offered_plans": [new_plan] if not offered_plans else offered_plans + [new_plan],
+                    "awaiting_reason_for_delay": bool(pending_date),  # Only if date exists
+                    "awaiting_user": True,
+                    "stage": "negotiation"
+                }
+            else:
+                # Couldn't detect specific plan - ask for clarification
+                print(f"[PLAN CHANGE] ❌ Could not extract plan from: '{last_user_input}'")
+                return {
+                    "messages": state["messages"] + [{
+                        "role": "assistant",
+                        "content": "I understand you'd like to change plans. Which plan would you prefer - the 3-month plan or the 6-month plan?"
+                    }],
+                    "offered_plans": state.get("offered_plans", []),  # Preserve plans
+                    "awaiting_user": True,
+                    "stage": "negotiation"
+                }
+
         # Clean up the input for checking
         cleaned_input = last_user_input.strip().lower() if last_user_input else ""
         cleaned_input = cleaned_input.replace(",", "").replace(".", "")
@@ -769,6 +907,7 @@ def negotiation_node(state: CallState) -> dict:
                     "role": "assistant",
                     "content": "Please let me know the reason for the delay in payment."
                 }],
+                "offered_plans": state.get("offered_plans", []),
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
@@ -838,8 +977,23 @@ def negotiation_node(state: CallState) -> dict:
                 "awaiting_reason_for_delay": False,
                 "pending_ptp_amount": None,
                 "pending_ptp_date": None,
+                "offered_plans": state.get("offered_plans", []),
             }
         else:
+            # 🛑 SAFETY: Do not finalize without confirmed plan
+            if not state.get("selected_plan"):
+                return {
+                    "messages": state["messages"] + [{
+                        "role": "assistant",
+                        "content": (
+                            "Before I proceed, please confirm which plan you'd like to go with."
+                        )
+                    }],
+                    "offered_plans": state.get("offered_plans", []),
+                    "awaiting_user": True,
+                    "stage": "negotiation"
+                }
+
             # REGULAR SCENARIO: Create ONE PTP with correct plan name
             ptp_amount = state.get("pending_ptp_amount")
             ptp_date = state.get("pending_ptp_date")
@@ -901,6 +1055,7 @@ def negotiation_node(state: CallState) -> dict:
                 "awaiting_reason_for_delay": False,
                 "pending_ptp_amount": None,
                 "pending_ptp_date": None,
+                "offered_plans": state.get("offered_plans", []),
             }
     
     # 4.5 COLLECTING PARTIAL AMOUNT (user responded with amount)
@@ -927,6 +1082,7 @@ def negotiation_node(state: CallState) -> dict:
                 "partial_payment_amount": amount_offered,
                 "partial_payment_remaining": remaining,
                 "awaiting_partial_amount_clarification": False,
+                "offered_plans": state.get("offered_plans", []),
                 "payment_status": "willing",
                 "awaiting_user": True,
                 "stage": "negotiation"
@@ -938,6 +1094,7 @@ def negotiation_node(state: CallState) -> dict:
             return {
                 "messages": state["messages"] + [{"role": "assistant", "content": response}],
                 "awaiting_user": True,
+                "offered_plans": state.get("offered_plans", []),
                 "stage": "negotiation"
             }
 
@@ -959,6 +1116,7 @@ def negotiation_node(state: CallState) -> dict:
         response = f"How much can you pay today, {customer_name}? Please provide a specific amount."
         return {
             "messages": state["messages"] + [{"role": "assistant", "content": response}],
+            "offered_plans": state.get("offered_plans", []),
             "awaiting_user": True,
             "stage": "negotiation"
         }
@@ -980,6 +1138,7 @@ def negotiation_node(state: CallState) -> dict:
             return {
                 "messages": state["messages"] + [{"role": "assistant", "content": response}],
                 "immediate_settlement_stage": 1,
+                "offered_plans": state.get("offered_plans", []),
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
@@ -997,6 +1156,7 @@ def negotiation_node(state: CallState) -> dict:
             return {
                 "messages": state["messages"] + [{"role": "assistant", "content": response}],
                 "immediate_settlement_stage": 2,
+                "offered_plans": state.get("offered_plans", []),
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
@@ -1082,6 +1242,7 @@ def negotiation_node(state: CallState) -> dict:
             return {
                 "messages": state["messages"] + [{"role": "assistant", "content": response}],
                 "immediate_settlement_stage": immediate_settlement_stage,
+                "offered_plans": state.get("offered_plans", []),
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
@@ -1098,6 +1259,7 @@ def negotiation_node(state: CallState) -> dict:
             return {
                 "messages": state["messages"] + [{"role": "assistant", "content": response}],
                 "installment_stage": 1,
+                "offered_plans": state.get("offered_plans", []),
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
@@ -1113,6 +1275,7 @@ def negotiation_node(state: CallState) -> dict:
             return {
                 "messages": state["messages"] + [{"role": "assistant", "content": response}],
                 "installment_stage": 2,
+                "offered_plans": state.get("offered_plans", []),
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
@@ -1148,6 +1311,7 @@ def negotiation_node(state: CallState) -> dict:
                     "content": "Thank you. Before I proceed, may I know the reason for the delay in payment?"
                 }],
                 "pending_ptp_date": committed_date,
+                "offered_plans": state.get("offered_plans", []),
                 "awaiting_reason_for_delay": True,
                 "awaiting_user": True,
                 "stage": "negotiation"
@@ -1159,6 +1323,7 @@ def negotiation_node(state: CallState) -> dict:
                     "role": "assistant",
                     "content": "Could you please provide a specific date?"
                 }],
+                "offered_plans": state.get("offered_plans", []),
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
@@ -1171,7 +1336,8 @@ def negotiation_node(state: CallState) -> dict:
         
         # ✅ CRITICAL FIX: Persist selected plan
         if selected_plan:
-            state["selected_plan"] = selected_plan
+            # Note: We return selected_plan in the dict below instead of mutating state directly
+            pass
         
         if not committed_date:
             return {
@@ -1181,6 +1347,7 @@ def negotiation_node(state: CallState) -> dict:
                 }],
                 "pending_ptp_amount": committed_amount or amount,
                 "selected_plan": selected_plan,
+                "offered_plans": state.get("offered_plans", []),  # ✅ ADD THIS LINE
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
@@ -1199,6 +1366,8 @@ def negotiation_node(state: CallState) -> dict:
             }],
             "pending_ptp_amount": pending_amount,
             "pending_ptp_date": committed_date,
+            "selected_plan": selected_plan,
+            "offered_plans": state.get("offered_plans", []),  # ✅ ADD THIS LINE
             "awaiting_reason_for_delay": True,
             "awaiting_user": True,
             "stage": "negotiation"
@@ -1218,6 +1387,7 @@ def negotiation_node(state: CallState) -> dict:
     
     return {
         "messages": state["messages"] + [{"role": "assistant", "content": message}],
+        "offered_plans": state.get("offered_plans", []),
         "awaiting_user": True,
         "stage": "negotiation"
     }
