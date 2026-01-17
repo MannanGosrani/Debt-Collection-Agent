@@ -289,3 +289,10 @@ def validate_state(state: CallState):
         raise ValueError(
             "Invalid state: is_complete=True without call_outcome"
         )
+        
+    # Final confirmation must end the session
+    if state.get("ptp_id") and state.get("delay_reason"):
+        if not state.get("is_complete"):
+            raise ValueError(
+                "Invalid state: PTP recorded but is_complete is False"
+            )

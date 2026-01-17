@@ -821,14 +821,23 @@ def negotiation_node(state: CallState) -> dict:
             
             return {
                 "messages": state["messages"] + [{"role": "assistant", "content": confirmation_message}],
+
+                # Persist primary PTP
                 "ptp_amount": partial_amount,
                 "ptp_date": partial_date,
                 "ptp_id": ptp_id_1,
                 "delay_reason": reason,
-                "awaiting_whatsapp_confirmation": False,
+
+                # 🔒 HARD STOP
+                "awaiting_user": False,
+                "is_complete": True,
+                "call_outcome": "ptp_recorded_partial",
+                "stage": "closing",
+
+                # Cleanup
                 "awaiting_reason_for_delay": False,
-                "stage": "negotiation",
-                "awaiting_user": True
+                "pending_ptp_amount": None,
+                "pending_ptp_date": None,
             }
         else:
             # REGULAR SCENARIO: Create ONE PTP with correct plan name
@@ -875,14 +884,23 @@ def negotiation_node(state: CallState) -> dict:
             
             return {
                 "messages": state["messages"] + [{"role": "assistant", "content": confirmation_message}],
+
+                # Persist PTP
                 "ptp_amount": ptp_amount,
                 "ptp_date": ptp_date,
                 "ptp_id": ptp_id,
                 "delay_reason": reason,
-                "awaiting_whatsapp_confirmation": False,
+
+                # 🔒 HARD STOP
+                "awaiting_user": False,
+                "is_complete": True,
+                "call_outcome": "ptp_recorded",
+                "stage": "closing",
+
+                # Cleanup
                 "awaiting_reason_for_delay": False,
-                "stage": "negotiation",
-                "awaiting_user": True
+                "pending_ptp_amount": None,
+                "pending_ptp_date": None,
             }
     
     # 4.5 COLLECTING PARTIAL AMOUNT (user responded with amount)
