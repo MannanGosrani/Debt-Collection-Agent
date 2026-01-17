@@ -239,7 +239,6 @@ def validate_state(state: CallState):
             raise ValueError(
                 "Invalid state: awaiting_reason_for_delay=True but awaiting_user=False and no user input"
             )
-
     if state.get("payment_status") == "willing":
         # Allow partial payment flow without PTP details initially
         if state.get("partial_payment_amount") is not None:
@@ -252,6 +251,10 @@ def validate_state(state: CallState):
         # Allow in negotiation stage without PTP details (NEW)
         elif state.get("stage") == "negotiation" and not state.get("pending_ptp_amount"):
             # In negotiation, still gathering details - allow it
+            pass
+        # ✅ NEW: Allow null date when we just asked "When would you like to pay?"
+        elif state.get("stage") == "negotiation" and state.get("pending_ptp_amount") and not state.get("pending_ptp_date"):
+            # We have amount, waiting for date - intermediate state is valid
             pass
         # Allow null date if we're still awaiting reason for delay
         elif state.get("awaiting_reason_for_delay"):
@@ -272,6 +275,13 @@ def validate_state(state: CallState):
         if not state.get("ptp_amount") or not state.get("ptp_date"):
             raise ValueError(
                 "Invalid state: ptp_id exists without ptp_amount or ptp_date"
+            )
+
+    # If PTP is being finalized, selected_plan must exist for installment flows
+    if state.get("is_complete") and state.get("ptp_id"):
+        if state.get("installment_stage", 0) > 0 and not state.get("selected_plan"):
+            raise ValueError(
+                "PTP finalized without selected_plan for installment flow"
             )
 
     # If conversation is complete, must have an outcome

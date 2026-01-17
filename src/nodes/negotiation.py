@@ -160,64 +160,58 @@ def extract_partial_payment_offer(text: str, outstanding_amount: float) -> dict:
 def extract_amount(text: str) -> float:
     """
     Extract monetary amount from text.
-    Handles:
-    - Commas: 100,000
-    - Indian numbering: lakh, crore
-    - K notation: 100k
-    - Various numeric formats
+    CRITICAL FIXES:
+    - Don't extract years like "2026" from dates
+    - Handle ranges like "10-15k"
+    - Handle percentages like "50%"
     """
-    if not text:
-        return None
-        
-    text_lower = text.lower().strip()
-        
-    # Remove currency symbols
-    text_clean = text_lower.replace('rs', '').replace('₹', '').strip()
-        
-    # Handle "lakh" and "crore" (Indian numbering)
-    if 'lakh' in text_clean or 'lac' in text_clean:
-        # Extract the number before "lakh"
-        lakh_pattern = r'(\d+(?:\.\d+)?)\s*(?:lakh|lac)'
-        match = re.search(lakh_pattern, text_clean)
-        if match:
-            num = float(match.group(1))
-            amount = num * 100000
-            print(f"[AMOUNT] Extracted from lakh notation: Rs.{amount:,.0f}")
-            return amount
-            
-    if 'crore' in text_clean or 'cr' in text_clean:
-        # Extract the number before "crore"
-        crore_pattern = r'(\d+(?:\.\d+)?)\s*(?:crore|cr)'
-        match = re.search(crore_pattern, text_clean)
-        if match:
-            num = float(match.group(1))
-            amount = num * 10000000
-            print(f"[AMOUNT] Extracted from crore notation: Rs.{amount:,.0f}")
-            return amount
-            
-    # Handle 'k' notation (100k = 100000)
-    if 'k' in text_clean:
-        k_pattern = r'(\d+(?:\.\d+)?)\s*k'
-        match = re.search(k_pattern, text_clean)
-        if match:
-            amount = float(match.group(1)) * 1000
-            if 100 < amount < 10000000:
-                print(f"[AMOUNT] Extracted from 'k' notation: Rs.{amount:,.0f}")
-                return amount
-                
-    # Remove commas and extract pure number
-    text_clean = text_clean.replace(',', '').replace(' ', '')
-        
-    # Try to extract a standalone number
-    number_pattern = r'(\d+(?:\.\d+)?)'
-    match = re.search(number_pattern, text_clean)
+    text_lower = text.lower()
     
-    if match:
-        amount = float(match.group(1))
-        if 100 < amount < 10000000:  # Reasonable range
-            print(f"[AMOUNT] Extracted standalone number: Rs.{amount:,.0f}")
+    # CRITICAL FIX: Skip if this looks like a date with year
+    if re.search(r'\b(202[5-9]|203[0-9])\b', text):
+        date_patterns = [
+            r'\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(202[5-9]|203[0-9])',
+            r'(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2}(?:st|nd|rd|th)?\s+(202[5-9]|203[0-9])',
+        ]
+        for pattern in date_patterns:
+            if re.search(pattern, text_lower, re.IGNORECASE):
+                print(f"[AMOUNT] Skipping year in date: {text}")
+                text = re.sub(r'\b(202[5-9]|203[0-9])\b', '', text)
+    
+    # Remove commas and currency symbols
+    text = text.replace(',', '').replace('Rs', '').replace('rs', '')
+    
+    # CRITICAL FIX: Handle ranges like "10-15k"
+    range_pattern = r'(\d+)\s*-\s*(\d+)\s*k'
+    range_match = re.search(range_pattern, text_lower)
+    if range_match:
+        print(f"[AMOUNT] Found range, need clarification: {text}")
+        return None  # Let agent ask for clarification
+    
+    # Try amounts with 'k' notation
+    k_pattern = r'(\d+(?:\.\d+)?)\s*k'
+    k_match = re.search(k_pattern, text_lower)
+    if k_match:
+        amount = float(k_match.group(1)) * 1000
+        if 100 < amount < 1000000:
+            print(f"[AMOUNT] Extracted from 'k' notation: Rs.{amount:,.0f}")
             return amount
-            
+    
+    # Try standalone numbers (but avoid dates)
+    # Only if there's clear payment context
+    payment_context = ['pay', 'give', 'amount', 'rupees', 'rs', 'Rs.']
+    if any(word in text_lower for word in payment_context):
+        # Look for standalone numbers
+        standalone_pattern = r'\b(\d{4,})\b'
+        matches = re.findall(standalone_pattern, text)
+        for match in matches:
+            # Skip if it's a year
+            if not re.match(r'202[5-9]|203[0-9]', match):
+                amount = float(match)
+                if 100 < amount < 1000000:
+                    print(f"[AMOUNT] Extracted standalone amount: Rs.{amount:,.0f}")
+                    return amount
+    
     return None
 
 
@@ -711,31 +705,10 @@ def negotiation_node(state: CallState) -> dict:
 
     # 3. PARTIAL PAYMENT DETECTION (NEW - handles "100k today + rest in plans")
     partial_info = detect_partial_payment_scenario(state, last_user_input)
-
+    
     if partial_info["is_partial"]:
         amount_today = partial_info["amount_today"]
         remaining = partial_info["remaining"]
-        
-        # CRITICAL FIX: Check if we already have all the partial payment info
-        already_have_info = (
-            state.get("partial_payment_amount") and 
-            state.get("partial_payment_remaining") and
-            state.get("pending_ptp_date")  # They already told us the future date
-        )
-        
-        if already_have_info:
-            # We already asked, user is just repeating - move to acceptance flow
-            print(f"[PARTIAL PAYMENT] User repeating commitment, moving to ask for reason")
-            
-            return {
-                "messages": state["messages"] + [{
-                    "role": "assistant",
-                    "content": "Thank you. Before I proceed, may I know the reason for the delay in payment?"
-                }],
-                "awaiting_reason_for_delay": True,
-                "awaiting_user": True,
-                "stage": "negotiation"
-            }
         
         print(f"[PARTIAL PAYMENT] Customer offers Rs.{amount_today:,.0f} today, Rs.{remaining:,.0f} remaining")
         
@@ -752,8 +725,7 @@ def negotiation_node(state: CallState) -> dict:
             "partial_payment_remaining": remaining,
             "payment_status": "willing",
             "awaiting_user": True,
-            "stage": "negotiation",
-            "awaiting_partial_timing": True  # NEW FLAG
+            "stage": "negotiation"
         }
     
     # 3.5 VAGUE PARTIAL PAYMENT ("some amount today")
@@ -803,36 +775,30 @@ def negotiation_node(state: CallState) -> dict:
 
         reason = last_user_input.strip()
 
+        # Check if this is a PARTIAL PAYMENT scenario
+        is_partial_payment = state.get("partial_payment_amount") is not None
+        
+        if is_partial_payment:
+            # PARTIAL PAYMENT: Create TWO PTPs
+            partial_amount = state.get("partial_payment_amount")
+            remaining_amount = state.get("partial_payment_remaining")
+            partial_date = datetime.now().strftime("%d-%m-%Y")  # Today
+            remaining_date = state.get("pending_ptp_date")
             
-        # Record the reason and finalize PTP
-        reason = last_user_input
-
-        # CRITICAL FIX: Check if this is a partial payment scenario requiring TWO PTPs
-        if state.get("partial_payment_amount") and state.get("partial_payment_remaining"):
-            # Partial payment scenario - create TWO separate PTPs
-            
-            # First PTP: Immediate partial payment today
-            ptp_amount_1 = state.get("partial_payment_amount")
-            ptp_date_1 = datetime.now().strftime("%d-%m-%Y")  # Today's date
-            plan_name_1 = "Immediate Settlement"
-            
+            # Save PTP #1: Partial amount paid today
             ptp_id_1 = save_ptp(
                 customer_id=state["customer_id"],
-                amount=ptp_amount_1,
-                date=ptp_date_1,
-                plan_type=plan_name_1
+                amount=partial_amount,
+                date=partial_date,
+                plan_type="Immediate Settlement"
             )
             
-            # Second PTP: Remaining amount on future date
-            ptp_amount_2 = state.get("partial_payment_remaining")
-            ptp_date_2 = state.get("pending_ptp_date")
-            plan_name_2 = "Eventual Settlement"
-            
+            # Save PTP #2: Remaining amount paid later
             ptp_id_2 = save_ptp(
                 customer_id=state["customer_id"],
-                amount=ptp_amount_2,
-                date=ptp_date_2,
-                plan_type=plan_name_2
+                amount=remaining_amount,
+                date=remaining_date,
+                plan_type="Eventual Settlement"
             )
             
             payment_link_1 = f"https://abc-finance.com/pay/PTP{ptp_id_1}"
@@ -840,47 +806,53 @@ def negotiation_node(state: CallState) -> dict:
             
             confirmation_message = (
                 f"Thank you, {customer_name}. ✅\n\n"
-                f"I've recorded your commitment:\n"
-                f"- Plan: {plan_name_1}\n"
-                f"- Amount: Rs.{ptp_amount_1:,.0f}\n"
-                f"- Date: {ptp_date_1}\n"
-                f"- Reason: {reason}\n\n"
-                f"**Payment Link:** {payment_link_1}\n\n"
-                f"I've recorded your commitment:\n"
-                f"- Plan: {plan_name_2}\n"
-                f"- Amount: Rs.{ptp_amount_2:,.0f}\n"
-                f"- Date: {ptp_date_2}\n"
-                f"- Reason: {reason}\n\n"
-                f"**Payment Link:** {payment_link_2}"
+                f"I've recorded your commitment:\n\n"
+                f"**Immediate Payment:**\n"
+                f"• Plan: Immediate Settlement\n"
+                f"• Amount: Rs.{partial_amount:,.0f}\n"
+                f"• Date: {partial_date}\n"
+                f"• Reason: {reason}\n\n"
+                f"**Remaining Payment:**\n"
+                f"• Plan: Eventual Settlement\n"
+                f"• Amount: Rs.{remaining_amount:,.0f}\n"
+                f"• Date: {remaining_date}\n\n"
+                f"**Payment Link:** {payment_link_1}"
             )
             
             return {
                 "messages": state["messages"] + [{"role": "assistant", "content": confirmation_message}],
-                "ptp_amount": ptp_amount_2,  # Store eventual settlement as primary
-                "ptp_date": ptp_date_2,
-                "ptp_id": ptp_id_2,
+                "ptp_amount": partial_amount,
+                "ptp_date": partial_date,
+                "ptp_id": ptp_id_1,
                 "delay_reason": reason,
                 "awaiting_whatsapp_confirmation": False,
                 "awaiting_reason_for_delay": False,
-                "stage": "closing",
-                "awaiting_user": True,
-                "is_complete": True,              # Close the session
-                "call_outcome": "ptp_confirmed",  # Mark as successful
-                "stage": "closing",               # Move to closing stage
-                "awaiting_user": False            # Don't wait for more input
+                "stage": "negotiation",
+                "awaiting_user": True
             }
-            
         else:
-            # Normal scenario - single PTP
-            # Determine plan name
-            if state.get("selected_plan"):
-                selected_plan = state.get("selected_plan")
-                plan_name = selected_plan.get("name", "Payment Plan")
-            else:
-                plan_name = "Payment Plan"
-            
+            # REGULAR SCENARIO: Create ONE PTP with correct plan name
             ptp_amount = state.get("pending_ptp_amount")
             ptp_date = state.get("pending_ptp_date")
+            
+            # Determine the correct plan name
+            selected_plan = state.get("selected_plan")
+            if selected_plan:
+                # User explicitly selected a plan
+                plan_name = selected_plan.get("name", "Payment Plan")
+            else:
+                # Infer from negotiation stages
+                immediate_stage = state.get("immediate_settlement_stage", 0)
+                installment_stage = state.get("installment_stage", 0)
+                
+                if immediate_stage > 0 and installment_stage == 0:
+                    plan_name = "Immediate Settlement (5% discount)"
+                elif installment_stage == 1:
+                    plan_name = "3-Month Installment"
+                elif installment_stage == 2:
+                    plan_name = "6-Month Installment"
+                else:
+                    plan_name = "Payment Plan"
             
             ptp_id = save_ptp(
                 customer_id=state["customer_id"],
@@ -894,10 +866,10 @@ def negotiation_node(state: CallState) -> dict:
             confirmation_message = (
                 f"Thank you, {customer_name}. ✅\n\n"
                 f"I've recorded your commitment:\n"
-                f"- Plan: {plan_name}\n"
-                f"- Amount: Rs.{ptp_amount:,.0f}\n"
-                f"- Date: {ptp_date}\n"
-                f"- Reason: {reason}\n\n"
+                f"• Plan: {plan_name}\n"
+                f"• Amount: Rs.{ptp_amount:,.0f}\n"
+                f"• Date: {ptp_date}\n"
+                f"• Reason: {reason}\n\n"
                 f"**Payment Link:** {payment_link}"
             )
             
@@ -975,7 +947,7 @@ def negotiation_node(state: CallState) -> dict:
     
     # SCENARIO 2: User CAN'T pay full amount today
     if intent == "cant_pay_full":
-        # Progressive pushing: immediate settlement → 3-month → 6-month → escalate
+        # Progressive pushing: immediate settlement -> 3-month -> 6-month -> escalate
         
         if immediate_settlement_stage == 0:
             # First push: Offer immediate settlement with 5% discount
@@ -1142,10 +1114,46 @@ def negotiation_node(state: CallState) -> dict:
                 "awaiting_user": False
             }
     
+    # SCENARIO 3.5: Handle date provision for pending PTP
+    if intent == "providing_date" and state.get("pending_ptp_amount") and not state.get("pending_ptp_date"):
+        # User is providing the date we asked for
+        print(f"[DATE PROVISION] User providing date: '{last_user_input}'")
+        
+        # Extract the date
+        committed_date = extract_date(last_user_input)
+        
+        if committed_date:
+            # Have both amount and date - move to reason collection
+            return {
+                "messages": state["messages"] + [{
+                    "role": "assistant",
+                    "content": "Thank you. Before I proceed, may I know the reason for the delay in payment?"
+                }],
+                "pending_ptp_date": committed_date,
+                "awaiting_reason_for_delay": True,
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+        else:
+            # Couldn't extract date - ask again
+            return {
+                "messages": state["messages"] + [{
+                    "role": "assistant",
+                    "content": "Could you please provide a specific date?"
+                }],
+                "awaiting_user": True,
+                "stage": "negotiation"
+            }
+
+    
     # SCENARIO 4: User accepts
     if intent == "acceptance":
         # Check if we have amount and date
         has_complete, committed_amount, committed_date, selected_plan = has_commitment_details(state, last_user_input)
+        
+        # ✅ CRITICAL FIX: Persist selected plan
+        if selected_plan:
+            state["selected_plan"] = selected_plan
         
         if not committed_date:
             return {
@@ -1154,6 +1162,7 @@ def negotiation_node(state: CallState) -> dict:
                     "content": "When would you like to make this payment?"
                 }],
                 "pending_ptp_amount": committed_amount or amount,
+                "selected_plan": selected_plan,
                 "awaiting_user": True,
                 "stage": "negotiation"
             }
@@ -1194,4 +1203,3 @@ def negotiation_node(state: CallState) -> dict:
         "awaiting_user": True,
         "stage": "negotiation"
     }
-    
